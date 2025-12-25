@@ -1,0 +1,105 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/*
+  ⚠️ IMPORTANT
+  Tables are created via raw SQL.
+  Prisma models must MATCH the database.
+*/
+
+model users {
+  id            String   @id @db.Uuid
+  name          String
+  email         String   @unique
+  phone         String   @unique
+  password_hash String
+  role          String
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now())
+}
+
+model accounts {
+  id          String   @id @db.Uuid
+  owner_id    String?  @db.Uuid
+  owner_type  String?
+  currency    String   @default("KES")
+  created_at  DateTime @default(now())
+}
+
+model transactions {
+  id          String   @id @db.Uuid
+  reference   String   @unique
+  description String?
+  created_at  DateTime @default(now())
+}
+
+model entries {
+  id              String   @id @db.Uuid
+  transaction_id  String   @db.Uuid
+  account_id      String   @db.Uuid
+  amount          Decimal  @db.Decimal(14,2)
+  created_at      DateTime @default(now())
+}
+
+model payments {
+  id                 String   @id @db.Uuid
+  provider           String?
+  provider_reference String?
+  phone              String?
+  amount             Decimal? @db.Decimal(14,2)
+  status             String?
+  idempotency_key    String?  @unique
+  created_at         DateTime @default(now())
+}
+
+model products {
+  id         String   @id @db.Uuid
+  seller_id String   @db.Uuid
+  title      String?
+  price      Decimal? @db.Decimal(14,2)
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now())
+}
+
+model orders {
+  id         String   @id @db.Uuid
+  buyer_id  String   @db.Uuid
+  status     String?
+  total      Decimal? @db.Decimal(14,2)
+  created_at DateTime @default(now())
+}
+
+model order_items {
+  id         String   @id @db.Uuid
+  order_id  String   @db.Uuid
+  product_id String   @db.Uuid
+  quantity   Int?
+  price      Decimal? @db.Decimal(14,2)
+}
+
+model audit_logs {
+  id         String   @id @db.Uuid
+  actor_id  String?  @db.Uuid
+  action     String?
+  metadata   Json?
+  created_at DateTime @default(now())
+}
+
+model refresh_tokens {
+  id          String   @id @db.Uuid
+  user_id     String   @db.Uuid
+  token       String   @unique
+  expires_at  DateTime
+  created_at  DateTime @default(now())
+}
