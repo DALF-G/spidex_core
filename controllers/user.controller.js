@@ -14,7 +14,21 @@ exports.register = async (req, res, next) => {
   try {
     const { name, email, phone, password, role } = req.body;
 
-    const existing = await findUserByEmail(email);
+    // 🛡️ HARD GUARD (prevents Prisma crash)
+    if (
+      typeof name !== "string" ||
+      typeof email !== "string" ||
+      typeof phone !== "string" ||
+      typeof password !== "string"
+    ) {
+      return res.status(400).json({
+        message: "Invalid or missing fields",
+      });
+    }
+
+    const safeEmail = email.trim();
+
+    const existing = await findUserByEmail(safeEmail);
     if (existing) {
       return res.status(400).json({ message: "Email already exists" });
     }
@@ -22,9 +36,9 @@ exports.register = async (req, res, next) => {
     const password_hash = await bcrypt.hash(password, 12);
 
     const user = await createUserWithAccount({
-      name,
-      email,
-      phone,
+      name: name.trim(),
+      email: safeEmail,
+      phone: phone.trim(),
       password_hash,
       role,
     });
@@ -40,13 +54,13 @@ exports.register = async (req, res, next) => {
       id: user.id,
     });
 
-    // Store refresh token (safe, optional revoke)
+    // Store refresh token
     await prisma.refresh_tokens.create({
       data: {
         id: uuidv4(),
         user_id: user.id,
         token: refreshToken,
-        expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+        expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       },
     });
 
@@ -74,7 +88,14 @@ exports.login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
-    const user = await findUserByEmail(email);
+    // 🛡️ HARD GUARD (prevents Prisma crash)
+    if (typeof email !== "string" || typeof password !== "string") {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    const safeEmail = email.trim();
+
+    const user = await findUserByEmail(safeEmail);
     if (!user) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
