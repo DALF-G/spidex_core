@@ -26,6 +26,38 @@ router.get(
   adminController.getPendingSellers
 );
 
+router.put("/reject/:userId",protect,allowRoles("admin"),
+  adminController.rejectSeller
+);
+
+router.put("/toggle-active/:userId",protect,allowRoles("admin"),
+  adminController.toggleUserActive
+);
+
+router.delete("/delete/:userId",protect,allowRoles("admin"),
+  adminController.deleteUser
+);
+
+router.get("/audit-logs",protect,allowRoles("admin"),
+  adminController.getAuditLogs
+);
+
+router.get("/stats",protect,allowRoles("admin"),
+  adminController.getAdminStats
+);
+
+/**
+ * ADMIN: Refund disputed order
+ */
+router.post("/orders/refund/:orderId",protect,allowRoles("admin"),
+  adminController.refundOrder
+);
+
+router.get("/orders/disputed",protect,allowRoles("admin"),
+  adminController.getDisputedOrders
+);
+
+
 
 
 module.exports = router;

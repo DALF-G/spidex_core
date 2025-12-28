@@ -109,6 +109,7 @@ CREATE TABLE audit_logs (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
+
 -- ================================
 -- INDEXES (PERFORMANCE)
 -- ================================

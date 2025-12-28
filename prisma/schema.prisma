@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -12,94 +6,178 @@ datasource db {
   provider = "postgresql"
 }
 
-/*
-  ⚠️ IMPORTANT
-  Tables are created via raw SQL.
-  Prisma models must MATCH the database.
-*/
-
 model users {
-  id            String   @id @db.Uuid
-  name          String
-  email         String   @unique
-  phone         String   @unique
-  password_hash String
-  role          String
-  is_active     Boolean  @default(true)
-  created_at    DateTime @default(now())
+  id             String           @id @db.Uuid
+  name           String           @db.VarChar(120)
+  email          String           @unique @db.VarChar(120)
+  phone          String           @unique @db.VarChar(20)
+  password_hash  String
+  role           String           @db.VarChar(20)
+  is_active      Boolean?         @default(true)
+  created_at     DateTime?        @default(now()) @db.Timestamp(6)
+  notifications  notifications[]
+  orders         orders[]
+  products       products[]
+  refresh_tokens refresh_tokens[]
 }
 
 model accounts {
-  id          String   @id @db.Uuid
-  owner_id    String?  @db.Uuid
-  owner_type  String?
-  currency    String   @default("KES")
-  created_at  DateTime @default(now())
+  id         String    @id @db.Uuid
+  owner_id   String?   @db.Uuid
+  owner_type String?   @db.VarChar(20)
+  currency   String?   @default("KES") @db.VarChar(10)
+  created_at DateTime? @default(now()) @db.Timestamp(6)
+  entries    entries[]
 }
 
 model transactions {
-  id          String   @id @db.Uuid
-  reference   String   @unique
+  id          String    @id @db.Uuid
+  reference   String    @unique @db.VarChar(100)
   description String?
-  created_at  DateTime @default(now())
+  created_at  DateTime? @default(now()) @db.Timestamp(6)
+  entries     entries[]
 }
 
 model entries {
-  id              String   @id @db.Uuid
-  transaction_id  String   @db.Uuid
-  account_id      String   @db.Uuid
-  amount          Decimal  @db.Decimal(14,2)
-  created_at      DateTime @default(now())
+  id             String        @id @db.Uuid
+  transaction_id String?       @db.Uuid
+  account_id     String?       @db.Uuid
+  amount         Decimal       @db.Decimal(14, 2)
+  created_at     DateTime?     @default(now()) @db.Timestamp(6)
+  accounts       accounts?     @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  transactions   transactions? @relation(fields: [transaction_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([transaction_id], map: "idx_entries_transaction")
 }
 
 model payments {
-  id                 String   @id @db.Uuid
-  provider           String?
-  provider_reference String?
-  phone              String?
-  amount             Decimal? @db.Decimal(14,2)
-  status             String?
-  idempotency_key    String?  @unique
-  created_at         DateTime @default(now())
-}
+  id                 String    @id @db.Uuid
+  provider           String?   @db.VarChar(50)
+  provider_reference String?   @db.VarChar(100)
+  phone              String?   @db.VarChar(20)
+  amount             Decimal?  @db.Decimal(14, 2)
+  status             String?   @db.VarChar(20)
+  idempotency_key    String?   @unique @db.VarChar(100)
+  created_at         DateTime? @default(now()) @db.Timestamp(6)
 
-model products {
-  id         String   @id @db.Uuid
-  seller_id String   @db.Uuid
-  title      String?
-  price      Decimal? @db.Decimal(14,2)
-  is_active  Boolean  @default(true)
-  created_at DateTime @default(now())
+  @@index([status], map: "idx_payments_status")
 }
 
 model orders {
-  id         String   @id @db.Uuid
-  buyer_id  String   @db.Uuid
-  status     String?
-  total      Decimal? @db.Decimal(14,2)
-  created_at DateTime @default(now())
+  id          String        @id @db.Uuid
+  buyer_id    String?       @db.Uuid
+  status      String?       @db.VarChar(20)
+  total       Decimal?      @db.Decimal(14, 2)
+  created_at  DateTime?     @default(now()) @db.Timestamp(6)
+  order_items order_items[]
+  users       users?        @relation(fields: [buyer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([buyer_id], map: "idx_orders_buyer")
 }
 
 model order_items {
-  id         String   @id @db.Uuid
-  order_id  String   @db.Uuid
-  product_id String   @db.Uuid
+  id         String    @id @db.Uuid
+  order_id   String?   @db.Uuid
+  product_id String?   @db.Uuid
   quantity   Int?
-  price      Decimal? @db.Decimal(14,2)
+  price      Decimal?  @db.Decimal(14, 2)
+  orders     orders?   @relation(fields: [order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  products   products? @relation(fields: [product_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model audit_logs {
-  id         String   @id @db.Uuid
-  actor_id  String?  @db.Uuid
+  id         String    @id @db.Uuid
+  actor_id   String?   @db.Uuid
   action     String?
   metadata   Json?
-  created_at DateTime @default(now())
+  created_at DateTime? @default(now()) @db.Timestamp(6)
 }
 
 model refresh_tokens {
-  id          String   @id @db.Uuid
-  user_id     String   @db.Uuid
-  token       String   @unique
-  expires_at  DateTime
-  created_at  DateTime @default(now())
+  id         String    @id @db.Uuid
+  user_id    String?   @db.Uuid
+  token      String    @unique
+  expires_at DateTime  @db.Timestamp(6)
+  created_at DateTime? @default(now()) @db.Timestamp(6)
+  users      users?    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model conversations {
+  id         String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  buyer_id   String     @db.Uuid
+  seller_id  String     @db.Uuid
+  created_at DateTime?  @default(now()) @db.Timestamp(6)
+  messages   messages[]
+
+  @@unique([buyer_id, seller_id])
+}
+
+model messages {
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversation_id String?        @db.Uuid
+  sender_id       String         @db.Uuid
+  sender_role     String
+  receiver_id     String         @db.Uuid
+  body            String
+  is_deleted      Boolean?       @default(false)
+  deleted_by      String?        @db.Uuid
+  is_read         Boolean?       @default(false)
+  read_at         DateTime?      @db.Timestamp(6)
+  created_at      DateTime?      @default(now()) @db.Timestamp(6)
+  conversation    conversations? @relation(fields: [conversation_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model notifications {
+  id         String    @id @db.Uuid
+  user_id    String?   @db.Uuid
+  title      String
+  message    String
+  is_read    Boolean?  @default(false)
+  created_at DateTime? @default(now()) @db.Timestamp(6)
+  users      users?    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model products {
+  id             String         @id @default(uuid()) @db.Uuid
+  seller_id      String?        @db.Uuid
+  title          String?        @db.VarChar(150)
+  price          Decimal?       @db.Decimal(14, 2)
+  is_active      Boolean?       @default(true)
+  created_at     DateTime?      @default(now()) @db.Timestamp(6)
+  description    String?
+  category_id    String         @db.Uuid
+  subcategory_id String?        @db.Uuid
+  order_items    order_items[]
+  productimage   productimage[]
+  category       category       @relation(fields: [category_id], references: [id], onUpdate: NoAction, map: "fk_products_category")
+  subcategory    subcategory?   @relation(fields: [subcategory_id], references: [id], onUpdate: NoAction, map: "fk_products_subcategory")
+  users          users?         @relation(fields: [seller_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model category {
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String        @unique @db.VarChar(255)
+  photo       String?
+  created_at  DateTime?     @default(now()) @db.Timestamp(6)
+  products    products[]
+  subcategory subcategory[]
+}
+
+model subcategory {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String     @db.VarChar(255)
+  category_id String     @db.Uuid
+  created_at  DateTime?  @default(now()) @db.Timestamp(6)
+  products    products[]
+  category    category   @relation(fields: [category_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_category")
+
+  @@unique([name, category_id], map: "unique_sub_per_category")
+}
+
+model productimage {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  url        String
+  product_id String    @db.Uuid
+  created_at DateTime? @default(now()) @db.Timestamp(6)
+  products   products  @relation(fields: [product_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_productimage_product")
 }
