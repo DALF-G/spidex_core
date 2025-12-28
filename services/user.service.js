@@ -11,9 +11,24 @@ async function createUserWithAccount({
   password_hash,
   role,
 }) {
-  // 🔍 PRE-CHECKS (explicit & reliable)
+  // 🛡️ HARD GUARDS (NO LOGIC CHANGE)
+  if (
+    typeof email !== "string" ||
+    typeof phone !== "string" ||
+    !email.trim() ||
+    !phone.trim()
+  ) {
+    const err = new Error("Invalid email or phone");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const safeEmail = email.trim();
+  const safePhone = phone.trim();
+
+  // 🔍 PRE-CHECKS (SAFE)
   const emailExists = await prisma.users.findUnique({
-    where: { email },
+    where: { email: safeEmail },
     select: { id: true },
   });
 
@@ -24,7 +39,7 @@ async function createUserWithAccount({
   }
 
   const phoneExists = await prisma.users.findUnique({
-    where: { phone },
+    where: { phone: safePhone },
     select: { id: true },
   });
 
@@ -34,16 +49,16 @@ async function createUserWithAccount({
     throw err;
   }
 
-  // ✅ TRANSACTION (unchanged logic)
+  // ✅ TRANSACTION (UNCHANGED LOGIC)
   return prisma.$transaction(async (tx) => {
     const userId = uuidv4();
 
     const user = await tx.users.create({
       data: {
         id: userId,
-        name,
-        email,
-        phone,
+        name: name?.trim(),
+        email: safeEmail,
+        phone: safePhone,
         password_hash,
         role,
         is_active: role === "seller" ? false : true,
@@ -64,7 +79,7 @@ async function createUserWithAccount({
         id: uuidv4(),
         actor_id: userId,
         action: "USER_CREATED",
-        metadata: { email, role },
+        metadata: { email: safeEmail, role },
       },
     });
 
@@ -73,11 +88,15 @@ async function createUserWithAccount({
 }
 
 /**
- * Find user by email
+ * Find user by email (SAFE)
  */
 async function findUserByEmail(email) {
+  if (typeof email !== "string" || !email.trim()) {
+    return null; // 🛡️ prevents Prisma crash
+  }
+
   return prisma.users.findUnique({
-    where: { email },
+    where: { email: email.trim() },
   });
 }
 
