@@ -28,6 +28,8 @@ router.get(
   productController.getMyProducts
 );
 
+router.get("/:id", protect, productController.getProductById);
+
 /**
  * CREATE PRODUCT
  */

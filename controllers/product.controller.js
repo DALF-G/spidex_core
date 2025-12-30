@@ -1,10 +1,8 @@
 const prisma = require("../config/db");
 
-/**
- * CREATE PRODUCT
- * - Admin: can create for any seller (seller_id required)
- * - Seller: can only create for self
- */
+/* ===========================
+   CREATE PRODUCT
+=========================== */
 exports.createProduct = async (req, res, next) => {
   try {
     const {
@@ -22,7 +20,7 @@ exports.createProduct = async (req, res, next) => {
 
     let finalSellerId = req.user.id;
 
-    // 🧠 Admin can create for another seller
+    // Admin can create for another seller
     if (req.user.role === "admin") {
       if (!seller_id) {
         return res
@@ -32,7 +30,7 @@ exports.createProduct = async (req, res, next) => {
       finalSellerId = seller_id;
     }
 
-    // 🚫 Seller cannot spoof seller_id
+    // Seller cannot spoof seller_id
     if (req.user.role === "seller" && seller_id) {
       return res.status(403).json({ message: "Not allowed" });
     }
@@ -57,205 +55,170 @@ exports.createProduct = async (req, res, next) => {
   }
 };
 
-/**
- * GET ALL PRODUCTS (ROOT / PUBLIC / ADMIN)
- */
+/* ===========================
+   GET ALL PRODUCTS
+   (Pagination + Filters)
+=========================== */
 exports.getAllProducts = async (req, res, next) => {
   try {
-    const products = await prisma.products.findMany({
-      where: { is_active: true },
-      include: {
-        users: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        category: true,
-        subcategory: true,
-        productimage: true,
-      },
-      orderBy: { created_at: "desc" },
-    });
+    const {
+      page = 1,
+      limit = 12,
+      category,
+      seller,
+      q,
+      subcategory,
+    } = req.query;
 
-    // 🔁 Standardize response for frontend
-    const formattedProducts = products.map((product) => {
-      const { users, ...rest } = product;
-      return {
-        ...rest,
-        seller: users, // 👈 rename users → seller
-      };
-    });
+    const skip = (Number(page) - 1) * Number(limit);
+
+    const where = { is_active: true };
+
+    if (category) where.category_id = category;
+    if (subcategory) where.subcategory_id = subcategory;
+    if (seller) where.seller_id = seller;
+
+    if (q) {
+      where.OR = [
+        { title: { contains: q, mode: "insensitive" } },
+        { description: { contains: q, mode: "insensitive" } },
+      ];
+    }
+
+    const [products, count] = await Promise.all([
+      prisma.products.findMany({
+        where,
+        skip,
+        take: Number(limit),
+        orderBy: { created_at: "desc" },
+        include: {
+          users: { select: { id: true, name: true } },
+          category: true,
+          subcategory: true,
+          productimage: true,
+        },
+      }),
+      prisma.products.count({ where }),
+    ]);
+
+    const formatted = products.map(({ users, ...rest }) => ({
+      ...rest,
+      seller: users,
+    }));
 
     res.json({
       success: true,
-      products: formattedProducts,
+      count,
+      page: Number(page),
+      products: formatted,
     });
   } catch (err) {
     next(err);
   }
 };
 
+/* ===========================
+   GET PRODUCT BY ID
+   (VIEW TRACKING)
+=========================== */
+exports.getProductById = async (req, res, next) => {
+  try {
+    const { id } = req.params;
 
-/**
- * GET PRODUCTS FOR LOGGED-IN SELLER
- */
+    const product = await prisma.products.findUnique({
+      where: { id },
+      include: {
+        users: { select: { id: true, name: true, phone: true } },
+        category: true,
+        subcategory: true,
+        productimage: true,
+      },
+    });
+
+    if (!product) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    // 🔁 Increment product views (non-blocking)
+    prisma.products.update({
+      where: { id },
+      data: { views: { increment: 1 } },
+    }).catch(() => {});
+
+    // 👁️ Buyer view tracking
+    if (req.user && req.user.role === "buyer") {
+      const buyerId = req.user.id;
+      const sellerId = product.seller_id;
+
+      // Log every product view
+      await prisma.product_views.create({
+        data: {
+          product_id: id,
+          buyer_id: buyerId,
+          seller_id: sellerId,
+        },
+      });
+
+      // Track unique buyer → seller visit
+      await prisma.buyer_visits.upsert({
+        where: {
+          seller_id_buyer_id: {
+            seller_id: sellerId,
+            buyer_id: buyerId,
+          },
+        },
+        update: { last_visit: new Date() },
+        create: {
+          seller_id: sellerId,
+          buyer_id: buyerId,
+        },
+      });
+    }
+
+    const { users, ...rest } = product;
+
+    res.json({
+      success: true,
+      product: {
+        ...rest,
+        seller: users,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/* ===========================
+   GET MY PRODUCTS (SELLER)
+=========================== */
 exports.getMyProducts = async (req, res, next) => {
   try {
     const products = await prisma.products.findMany({
       where: { seller_id: req.user.id },
+      orderBy: { created_at: "desc" },
       include: {
-        users: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
+        users: { select: { id: true, name: true } },
         category: true,
         subcategory: true,
         productimage: true,
       },
-      orderBy: { created_at: "desc" },
     });
 
-    // 🔁 Standardize response (users → seller)
-    const formattedProducts = products.map((product) => {
-      const { users, ...rest } = product;
-      return {
-        ...rest,
-        seller: users,
-      };
-    });
+    const formatted = products.map(({ users, ...rest }) => ({
+      ...rest,
+      seller: users,
+    }));
 
     res.json({
       success: true,
-      products: formattedProducts,
+      products: formatted,
     });
   } catch (err) {
     next(err);
   }
 };
 
-/**
- * UPDATE PRODUCT
- * - Admin: any product
- * - Seller: only own product
- */
-exports.updateProduct = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-
-    const product = await prisma.products.findUnique({
-      where: { id },
-    });
-
-    if (!product) {
-      return res.status(404).json({ message: "Product not found" });
-    }
-
-    // 🚫 Seller ownership enforcement
-    if (req.user.role === "seller" && product.seller_id !== req.user.id) {
-      return res.status(403).json({ message: "Access denied" });
-    }
-
-    const updated = await prisma.products.update({
-      where: { id },
-      data: req.body,
-    });
-
-    res.json({
-      success: true,
-      product: updated,
-    });
-  } catch (err) {
-    next(err);
-  }
-};
-
-/**
- * DELETE PRODUCT
- * - Admin: any product
- * - Seller: only own product
- */
-exports.deleteProduct = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-
-    const product = await prisma.products.findUnique({ where: { id } });
-
-    if (!product) {
-      return res.status(404).json({ message: "Product not found" });
-    }
-
-    if (req.user.role === "seller" && product.seller_id !== req.user.id) {
-      return res.status(403).json({ message: "Access denied" });
-    }
-
-    await prisma.products.delete({ where: { id } });
-
-    res.json({
-      success: true,
-      message: "Product deleted",
-    });
-  } catch (err) {
-    next(err);
-  }
-};
-
-/**
- * UPLOAD PRODUCT IMAGES
- * - Admin: any product
- * - Seller: own product only
- */
-exports.uploadProductImages = async (req, res, next) => {
-  try {
-    console.log("FILES:", req.files);
-
-    const { id } = req.params;
-
-    if (!req.files || req.files.length === 0) {
-      return res.status(400).json({
-        message: "No images uploaded. Use form-data with key 'photo'.",
-      });
-    }
-
-    const product = await prisma.products.findUnique({
-      where: { id },
-    });
-
-    if (!product) {
-      return res.status(404).json({ message: "Product not found" });
-    }
-
-    if (req.user.role === "seller" && product.seller_id !== req.user.id) {
-      return res.status(403).json({ message: "Access denied" });
-    }
-
-    const images = await Promise.all(
-      req.files.map((file) =>
-        prisma.productimage.create({
-          data: {
-            url: file.path,
-            product_id: id,
-          },
-        })
-      )
-    );
-
-    res.json({
-      success: true,
-      images,
-    });
-  } catch (err) {
-    next(err);
-  }
-};
-
-
-
-/**
- * SEARCH & FILTER PRODUCTS (PUBLIC)
- */
 exports.searchProducts = async (req, res, next) => {
   try {
     const {
@@ -288,28 +251,19 @@ exports.searchProducts = async (req, res, next) => {
 
     const products = await prisma.products.findMany({
       where,
+      orderBy: { created_at: "desc" },
       include: {
-        users: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
+        users: { select: { id: true, name: true } },
         category: true,
         subcategory: true,
         productimage: true,
       },
-      orderBy: { created_at: "desc" },
     });
 
-    // 🔁 Standardize response (users → seller)
-    const formattedProducts = products.map((product) => {
-      const { users, ...rest } = product;
-      return {
-        ...rest,
-        seller: users,
-      };
-    });
+    const formattedProducts = products.map(({ users, ...rest }) => ({
+      ...rest,
+      seller: users,
+    }));
 
     res.json({
       success: true,
@@ -320,3 +274,115 @@ exports.searchProducts = async (req, res, next) => {
     next(err);
   }
 };
+
+/* ===========================
+   UPDATE PRODUCT
+=========================== */
+exports.updateProduct = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const product = await prisma.products.findUnique({ where: { id } });
+
+    if (!product) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    if (
+      req.user.role === "seller" &&
+      product.seller_id !== req.user.id
+    ) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    const updated = await prisma.products.update({
+      where: { id },
+      data: req.body,
+    });
+
+    res.json({
+      success: true,
+      product: updated,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/* ===========================
+   DELETE PRODUCT
+=========================== */
+exports.deleteProduct = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const product = await prisma.products.findUnique({ where: { id } });
+
+    if (!product) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    if (
+      req.user.role === "seller" &&
+      product.seller_id !== req.user.id
+    ) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    await prisma.products.delete({ where: { id } });
+
+    res.json({
+      success: true,
+      message: "Product deleted",
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/* ===========================
+   UPLOAD PRODUCT IMAGES
+=========================== */
+exports.uploadProductImages = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({
+        message: "No images uploaded. Use form-data with key 'photo'.",
+      });
+    }
+
+    const product = await prisma.products.findUnique({ where: { id } });
+
+    if (!product) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    if (
+      req.user.role === "seller" &&
+      product.seller_id !== req.user.id
+    ) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    const images = await Promise.all(
+      req.files.map((file) =>
+        prisma.productimage.create({
+          data: {
+            url: file.path,
+            product_id: id,
+          },
+        })
+      )
+    );
+
+    res.json({
+      success: true,
+      images,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
