@@ -181,8 +181,3 @@ model productimage {
   created_at DateTime? @default(now()) @db.Timestamp(6)
   products   products  @relation(fields: [product_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_productimage_product")
 }
-
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
