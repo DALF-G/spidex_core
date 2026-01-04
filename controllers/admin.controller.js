@@ -15,18 +15,32 @@ exports.registerAdmin = async (req, res, next) => {
   try {
     const { name, email, phone, password, adminSecret } = req.body;
 
-    // 🔐 Extra protection
+    // 🔐 Secret check
     if (adminSecret !== process.env.ADMIN_SECRET_KEY) {
       return res.status(403).json({ message: "Invalid admin secret key" });
     }
 
+    // 🔒 Allow ONLY if no admin exists yet
+    const existingAdmin = await prisma.users.findFirst({
+      where: { role: "admin" },
+    });
+
+    if (existingAdmin) {
+      return res.status(403).json({
+        message: "Admin registration is disabled",
+      });
+    }
+
+    // 🔎 Duplicate email check
     const existing = await findUserByEmail(email);
     if (existing) {
       return res.status(400).json({ message: "Email already exists" });
     }
 
+    // 🔐 Hash password
     const password_hash = await bcrypt.hash(password, 12);
 
+    // ✅ Create admin
     const user = await createUserWithAccount({
       name,
       email,
@@ -35,7 +49,7 @@ exports.registerAdmin = async (req, res, next) => {
       role: "admin",
     });
 
-    // Tokens
+    // 🔑 Tokens
     const token = signToken({ id: user.id, role: user.role });
     const refreshToken = signRefreshToken({ id: user.id });
 
@@ -60,15 +74,16 @@ exports.registerAdmin = async (req, res, next) => {
         role: user.role,
       },
     });
-} catch (err) {
-    if (err.message.startsWith("Duplicate")) {
+  } catch (err) {
+    if (err.message?.startsWith("Duplicate")) {
       return res.status(400).json({
         message: err.message.replace("Duplicate ", "") + " already exists",
       });
     }
     next(err);
   }
-};  
+};
+
 
 /**
  * ADMIN LOGIN
