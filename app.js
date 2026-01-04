@@ -37,6 +37,7 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/seller", sellerRoutes);
 app.use("/api/buyer", buyerRoutes);
 app.use("/api/messages", messageRoutes);
+app.use("/api/auth", userRoutes);
 
 // ======================
 // HEALTH CHECK

@@ -5,7 +5,7 @@ const { protect } = require("../middlewares/auth.middleware");
 const { allowRoles } = require("../middlewares/role.middleware");
 
 // Only logged-in admins can create other admins
-router.post("/register",
+router.post("/register",protect,allowRoles("admin"),
   adminController.registerAdmin
 );
 
