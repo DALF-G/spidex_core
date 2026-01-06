@@ -17,6 +17,10 @@ router.get("/users",protect,allowRoles("admin"),
   adminController.getAllUsers
 );
 
+router.get("/sellers",protect,allowRoles("admin"),
+  adminController.getAllSellers
+);
+
 router.put("/approve/:userId",protect,allowRoles("admin"),
   adminController.approveSeller
 );

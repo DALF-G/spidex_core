@@ -632,3 +632,47 @@ exports.getDisputedOrders = async (req, res, next) => {
     next(err);
   }
 };
+
+/**
+ * ADMIN: View all sellers (approved + pending + suspended)
+ */
+exports.getAllSellers = async (req, res, next) => {
+  try {
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+    const skip = (page - 1) * limit;
+
+    const [sellers, total] = await Promise.all([
+      prisma.users.findMany({
+        where: {
+          role: "seller",
+        },
+        skip,
+        take: limit,
+        orderBy: { created_at: "desc" },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          is_active: true,        // approved = true
+          created_at: true,
+        },
+      }),
+      prisma.users.count({
+        where: { role: "seller" },
+      }),
+    ]);
+
+    res.json({
+      success: true,
+      page,
+      limit,
+      total,
+      sellers,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
