@@ -676,3 +676,42 @@ exports.getAllSellers = async (req, res, next) => {
   }
 };
 
+exports.getAllBuyers = async (req, res, next) => {
+  try {
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+    const skip = (page - 1) * limit;
+
+    const [buyers, total] = await Promise.all([
+      prisma.users.findMany({
+        where: {
+          role: "buyer",
+        },
+        skip,
+        take: limit,
+        orderBy: { created_at: "desc" },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          is_active: true,
+          created_at: true,
+        },
+      }),
+      prisma.users.count({
+        where: { role: "buyer" },
+      }),
+    ]);
+
+    res.json({
+      success: true,
+      page,
+      limit,
+      total,
+      buyers,
+    });
+  } catch (err) {
+    next(err);
+  }
+};

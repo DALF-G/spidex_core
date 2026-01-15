@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "main": "server.js",
   "scripts": {
+    "build": "npx prisma generate && npx prisma migrate deploy",
     "dev": "nodemon server.js",
     "start": "node server.js",
     "postinstall": "npx prisma migrate deploy && npx prisma generate"

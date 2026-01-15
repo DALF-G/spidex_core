@@ -50,6 +50,11 @@ router.get("/stats",protect,allowRoles("admin"),
   adminController.getAdminStats
 );
 
+router.get("/buyers",protect,allowRoles("admin"),
+  adminController.getAllBuyers
+);
+
+
 /**
  * ADMIN: Refund disputed order
  */
