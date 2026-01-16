@@ -11,6 +11,6 @@ const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({
   adapter,
 });
-console.log("Prisma models:", Object.keys(prisma));
+// console.log("Prisma models:", Object.keys(prisma));
 
 module.exports = prisma;
