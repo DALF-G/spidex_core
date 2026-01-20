@@ -402,30 +402,45 @@ exports.deleteUser = async (req, res, next) => {
 
     const user = await prisma.users.findUnique({
       where: { id: userId },
-      select: { id: true, role: true, is_active: true },
+      select: { id: true, role: true },
     });
 
     if (!user) {
-      return res.status(404).json({ message: "User not found" });
+      return res.status(404).json({
+        message: "User not found",
+      });
     }
 
-    // Already inactive = already deleted
-    if (!user.is_active) {
-      return res.status(400).json({ message: "User already deleted" });
-    }
+    /*
+      🔥 IMPORTANT:
+      If user has relations (orders, products, logs),
+      delete them FIRST to avoid FK constraint errors
+    */
 
-    // ✅ Soft delete
-    await prisma.users.update({
-      where: { id: userId },
-      data: { is_active: false },
+    // Example (adjust based on schema)
+    await prisma.audit_logs.deleteMany({
+      where: { actor_id: userId },
     });
 
-    // 🧾 Audit log
+    await prisma.orders?.deleteMany({
+      where: { user_id: userId },
+    });
+
+    await prisma.products?.deleteMany({
+      where: { seller_id: userId },
+    });
+
+    // 🔥🔥🔥 PERMANENT DELETE
+    await prisma.users.delete({
+      where: { id: userId },
+    });
+
+    // 🧾 Log deletion action (admin action log)
     await prisma.audit_logs.create({
       data: {
         id: uuidv4(),
         actor_id: req.user.id,
-        action: "USER_DELETED",
+        action: "USER_PERMANENTLY_DELETED",
         metadata: {
           deleted_user_id: userId,
           role: user.role,
@@ -433,14 +448,15 @@ exports.deleteUser = async (req, res, next) => {
       },
     });
 
-    res.json({
+    return res.status(200).json({
       success: true,
-      message: "User deleted successfully",
+      message: "User permanently deleted",
     });
   } catch (err) {
     next(err);
   }
 };
+
 
 /**
  * ADMIN: View audit logs (paginated)
