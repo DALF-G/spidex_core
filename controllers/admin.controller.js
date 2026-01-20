@@ -422,18 +422,21 @@ exports.deleteUser = async (req, res, next) => {
       where: { actor_id: userId },
     });
 
-    await prisma.orders?.deleteMany({
-      where: { user_id: userId },
-    });
+    // Delete buyer orders
+    await prisma.orders.deleteMany({
+  where: { buyer_id: userId },
+   });
 
-    await prisma.products?.deleteMany({
-      where: { seller_id: userId },
-    });
+    // Delete seller products (if applicable)
+   await prisma.products?.deleteMany({
+    where: { seller_id: userId },
+   });
 
-    // 🔥🔥🔥 PERMANENT DELETE
-    await prisma.users.delete({
-      where: { id: userId },
-    });
+   // 🔥 Hard delete user
+   await prisma.users.delete({
+    where: { id: userId },
+  });
+
 
     // 🧾 Log deletion action (admin action log)
     await prisma.audit_logs.create({
