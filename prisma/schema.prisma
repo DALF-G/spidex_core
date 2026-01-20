@@ -19,6 +19,7 @@ model users {
   orders         orders[]
   products       products[]
   refresh_tokens refresh_tokens[]
+  isApprovedSeller Boolean  @default(false) //
 }
 
 model accounts {

@@ -198,7 +198,12 @@ exports.approveSeller = async (req, res, next) => {
 
     const seller = await prisma.users.findUnique({
       where: { id: userId },
-      select: { id: true, role: true, is_active: true },
+      select: {
+        id: true,
+        role: true,
+        is_active: true,
+        isApprovedSeller: true,
+      },
     });
 
     if (!seller) {
@@ -209,38 +214,41 @@ exports.approveSeller = async (req, res, next) => {
       return res.status(400).json({ message: "User is not a seller" });
     }
 
-    if (seller.is_active) {
+    if (seller.isApprovedSeller) {
       return res.status(400).json({ message: "Seller already approved" });
     }
 
-    // ✅ Approve seller
+    // ✅ Approve seller (DO NOT TOUCH is_active)
     await prisma.users.update({
       where: { id: userId },
-      data: { is_active: true },
+      data: {
+        isApprovedSeller: true,
+      },
     });
 
     // 🧾 Audit log
     await prisma.audit_logs.create({
       data: {
         id: uuidv4(),
-        actor_id: req.user.id, // admin
+        actor_id: req.user.id,
         action: "SELLER_APPROVED",
         metadata: { seller_id: userId },
       },
     });
 
     // 🔔 Notify seller
-await notifyUser({
-  userId,
-  title: "Seller Approved 🎉",
-  message: "Your seller account has been approved. You can now list products.",
-});
+    await notifyUser({
+      userId,
+      title: "Seller Approved 🎉",
+      message: "Your seller account has been approved. You can now list products.",
+    });
 
     res.json({
       success: true,
       message: "Seller approved successfully",
     });
-  } catch (err) {
+  } 
+  catch (err) {
     next(err);
   }
 };
