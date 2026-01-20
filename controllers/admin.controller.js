@@ -15,32 +15,45 @@ exports.registerAdmin = async (req, res, next) => {
   try {
     const { name, email, phone, password, adminSecret } = req.body;
 
-    // 🔐 Secret check
-    if (adminSecret !== process.env.ADMIN_SECRET_KEY) {
-      return res.status(403).json({ message: "Invalid admin secret key" });
-    }
-
-    // 🔒 Allow ONLY if no admin exists yet
+    // 1️⃣ Check if any admin exists
     const existingAdmin = await prisma.users.findFirst({
       where: { role: "admin" },
+      select: { id: true },
     });
 
+    // 2️⃣ CASE A: NO ADMIN EXISTS (FIRST ADMIN)
+    if (!existingAdmin) {
+      if (adminSecret !== process.env.ADMIN_SECRET_KEY) {
+        return res.status(403).json({
+          message: "Invalid admin secret key",
+        });
+      }
+    }
+
+    // 3️⃣ CASE B: ADMIN EXISTS → REQUIRE AUTH ADMIN
     if (existingAdmin) {
-      return res.status(403).json({
-        message: "Admin registration is disabled",
+      if (!req.user || req.user.role !== "admin") {
+        return res.status(403).json({
+          message: "Only admins can create another admin",
+        });
+      }
+    }
+
+    // 4️⃣ Duplicate email check
+    const existingUser = await prisma.users.findUnique({
+      where: { email },
+    });
+
+    if (existingUser) {
+      return res.status(400).json({
+        message: "Email already exists",
       });
     }
 
-    // 🔎 Duplicate email check
-    const existing = await findUserByEmail(email);
-    if (existing) {
-      return res.status(400).json({ message: "Email already exists" });
-    }
-
-    // 🔐 Hash password
+    // 5️⃣ Hash password
     const password_hash = await bcrypt.hash(password, 12);
 
-    // ✅ Create admin
+    // 6️⃣ Create admin
     const user = await createUserWithAccount({
       name,
       email,
@@ -49,7 +62,7 @@ exports.registerAdmin = async (req, res, next) => {
       role: "admin",
     });
 
-    // 🔑 Tokens
+    // 7️⃣ Issue tokens ONLY for first admin or self-register
     const token = signToken({ id: user.id, role: user.role });
     const refreshToken = signRefreshToken({ id: user.id });
 
@@ -62,7 +75,7 @@ exports.registerAdmin = async (req, res, next) => {
       },
     });
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: "Admin registered successfully",
       token,
@@ -75,14 +88,10 @@ exports.registerAdmin = async (req, res, next) => {
       },
     });
   } catch (err) {
-    if (err.message?.startsWith("Duplicate")) {
-      return res.status(400).json({
-        message: err.message.replace("Duplicate ", "") + " already exists",
-      });
-    }
     next(err);
   }
 };
+
 
 
 /**
