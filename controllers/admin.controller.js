@@ -219,8 +219,8 @@ exports.approveSeller = async (req, res, next) => {
 
     await prisma.users.update({
       where: { id: userId },
-      data: { isApprovedSeller: true },
-      is_active: true,
+      data: { isApprovedSeller: true, is_active: true },
+      
     });
 
     await prisma.audit_logs.create({
