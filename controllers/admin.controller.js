@@ -201,7 +201,6 @@ exports.approveSeller = async (req, res, next) => {
       select: {
         id: true,
         role: true,
-        is_active: true,
         isApprovedSeller: true,
       },
     });
@@ -218,15 +217,12 @@ exports.approveSeller = async (req, res, next) => {
       return res.status(400).json({ message: "Seller already approved" });
     }
 
-    // ✅ Approve seller (DO NOT TOUCH is_active)
     await prisma.users.update({
       where: { id: userId },
-      data: {
-        isApprovedSeller: true,
-      },
+      data: { isApprovedSeller: true },
+      is_active: true,
     });
 
-    // 🧾 Audit log
     await prisma.audit_logs.create({
       data: {
         id: uuidv4(),
@@ -236,19 +232,14 @@ exports.approveSeller = async (req, res, next) => {
       },
     });
 
-    // 🔔 Notify seller
     await notifyUser({
       userId,
       title: "Seller Approved 🎉",
-      message: "Your seller account has been approved. You can now list products.",
+      message: "Your seller account has been approved.",
     });
 
-    res.json({
-      success: true,
-      message: "Seller approved successfully",
-    });
-  } 
-  catch (err) {
+    res.json({ success: true, message: "Seller approved successfully" });
+  } catch (err) {
     next(err);
   }
 };
@@ -661,9 +652,7 @@ exports.getAllSellers = async (req, res, next) => {
 
     const [sellers, total] = await Promise.all([
       prisma.users.findMany({
-        where: {
-          role: "seller",
-        },
+        where: { role: "seller" },
         skip,
         take: limit,
         orderBy: { created_at: "desc" },
@@ -672,7 +661,8 @@ exports.getAllSellers = async (req, res, next) => {
           name: true,
           email: true,
           phone: true,
-          is_active: true,        // approved = true
+          is_active: true,        
+          isApprovedSeller: true,   
           created_at: true,
         },
       }),
@@ -692,6 +682,7 @@ exports.getAllSellers = async (req, res, next) => {
     next(err);
   }
 };
+
 
 exports.getAllBuyers = async (req, res, next) => {
   try {
