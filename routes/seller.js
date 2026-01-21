@@ -5,9 +5,10 @@ const sellerController = require("../controllers/seller.controller");
 const { protect } = require("../middlewares/auth.middleware");
 const { allowRoles } = require("../middlewares/role.middleware");
 const sellerApproved = require("../middlewares/sellerApproved.middleware");
+const uploadKra = require("../middlewares/uploadKra.middleware");
 
 /**
- * Seller Profile
+ * User Account Profile
  */
 router.get(
   "/profile",
@@ -20,12 +21,28 @@ router.put(
   "/profile",
   protect,
   allowRoles("seller"),
-  sellerApproved,
   sellerController.updateProfile
 );
 
 /**
- * Seller Orders
+ * Company Profile
+ */
+router.get(
+  "/company-profile",
+  protect,
+  allowRoles("seller"),
+  sellerController.getSellerProfile
+);
+
+router.post(
+  "/company-profile",
+  protect,
+  allowRoles("seller"),
+  sellerController.upsertSellerProfile
+);
+
+/**
+ * Orders
  */
 router.get(
   "/orders",
@@ -36,7 +53,7 @@ router.get(
 );
 
 router.put(
-  "/order/status/:id",
+  "/orders/status/:id",
   protect,
   allowRoles("seller"),
   sellerApproved,
@@ -52,51 +69,7 @@ router.put(
 );
 
 /**
- * Notifications
- */
-router.get(
-  "/notifications",
-  protect,
-  allowRoles("seller"),
-  sellerController.getNotifications
-);
-
-router.put(
-  "/notifications/read/:id",
-  protect,
-  allowRoles("seller"),
-  sellerController.markNotificationRead
-);
-
-/**
- * Finance
- */
-router.get(
-  "/balance",
-  protect,
-  allowRoles("seller"),
-  sellerApproved,
-  sellerController.getBalance
-);
-
-router.get(
-  "/transactions",
-  protect,
-  allowRoles("seller"),
-  sellerApproved,
-  sellerController.getTransactions
-);
-
-router.get(
-  "/payouts",
-  protect,
-  allowRoles("seller"),
-  sellerApproved,
-  sellerController.getPayouts
-);
-
-/**
- * Status & Stats
+ * Seller Status
  */
 router.get(
   "/status",
@@ -105,12 +78,26 @@ router.get(
   sellerController.checkApprovalStatus
 );
 
+/**
+ * KRA Upload
+ */
+router.post(
+  "/company-profile/kra-upload",
+  protect,
+  allowRoles("seller"),
+  uploadKra.single("kra_certificate"),
+  sellerController.uploadKraCertificate
+);
+
+/**
+ * Dashboard
+ */
 router.get(
-  "/stats",
+  "/dashboard/charts",
   protect,
   allowRoles("seller"),
   sellerApproved,
-  sellerController.getSellerStats
+  sellerController.getSellerDashboardCharts
 );
 
 module.exports = router;

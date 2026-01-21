@@ -7,19 +7,20 @@ datasource db {
 }
 
 model users {
-  id             String           @id @db.Uuid
-  name           String           @db.VarChar(120)
-  email          String           @unique @db.VarChar(120)
-  phone          String           @unique @db.VarChar(20)
-  password_hash  String
-  role           String           @db.VarChar(20)
-  is_active      Boolean?         @default(true)
-  created_at     DateTime?        @default(now()) @db.Timestamp(6)
-  notifications  notifications[]
-  orders         orders[]
-  products       products[]
-  refresh_tokens refresh_tokens[]
-  isApprovedSeller Boolean  @default(false) //
+  id               String           @id @db.Uuid
+  name             String           @db.VarChar(120)
+  email            String           @unique @db.VarChar(120)
+  phone            String           @unique @db.VarChar(20)
+  password_hash    String
+  role             String           @db.VarChar(20)
+  is_active        Boolean?         @default(true)
+  created_at       DateTime?        @default(now()) @db.Timestamp(6)
+  notifications    notifications[]
+  orders           orders[]
+  products         products[]
+  refresh_tokens   refresh_tokens[]
+  isApprovedSeller Boolean          @default(false)
+  seller_profile   seller_profiles?
 }
 
 model accounts {
@@ -153,8 +154,7 @@ model products {
   category       category       @relation(fields: [category_id], references: [id], onUpdate: NoAction, map: "fk_products_category")
   subcategory    subcategory?   @relation(fields: [subcategory_id], references: [id], onUpdate: NoAction, map: "fk_products_subcategory")
   users          users?         @relation(fields: [seller_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  views Int @default(0)
-
+  views          Int            @default(0)
 }
 
 model category {
@@ -183,7 +183,8 @@ model productimage {
   product_id String    @db.Uuid
   created_at DateTime? @default(now()) @db.Timestamp(6)
   products   products  @relation(fields: [product_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_productimage_product")
-}model product_views {
+}
+model product_views {
   id         String   @id @default(uuid()) @db.Uuid
   product_id String   @db.Uuid
   buyer_id   String?  @db.Uuid
@@ -199,3 +200,23 @@ model buyer_visits {
 
   @@unique([seller_id, buyer_id])
 }
+
+model seller_profiles {
+  id               String   @id @default(uuid()) @db.Uuid
+  user_id          String   @unique @db.Uuid
+
+  company_name     String
+  kra_pin          String
+  company_location String
+  phone_primary    String
+  phone_secondary  String?
+
+  kra_certificate  String?   
+  is_verified      Boolean   @default(false)
+
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
+
+  users            users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+

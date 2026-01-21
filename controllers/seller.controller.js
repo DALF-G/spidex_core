@@ -2,11 +2,24 @@ const prisma = require("../config/db");
 const { v4: uuidv4 } = require("uuid");
 const { notifyUser } = require("../services/notification.service");
 
-const ALLOWED_STATUSES = ["pending", "processing", "shipped", "completed", "cancelled"];
+const ALLOWED_STATUSES = [
+  "pending",
+  "processing",
+  "shipped",
+  "completed",
+  "cancelled",
+];
+
 const COMMISSION_RATE = Number(process.env.COMMISSION_RATE || 0.10);
 
+const STATUS_TRANSITIONS = {
+  pending: ["processing", "cancelled"],
+  processing: ["shipped", "cancelled"],
+  shipped: ["completed"],
+};
+
 /**
- * SELLER: Get own profile
+ * SELLER: Get user account profile
  */
 exports.getProfile = async (req, res, next) => {
   try {
@@ -19,6 +32,7 @@ exports.getProfile = async (req, res, next) => {
         phone: true,
         role: true,
         is_active: true,
+        isApprovedSeller: true,
         created_at: true,
       },
     });
@@ -30,18 +44,96 @@ exports.getProfile = async (req, res, next) => {
 };
 
 /**
- * SELLER: Update own profile
+ * SELLER: Update user account profile (SAFE)
  */
 exports.updateProfile = async (req, res, next) => {
   try {
     const { name, phone } = req.body;
 
+    const data = {};
+    if (name !== undefined) data.name = name;
+    if (phone !== undefined) data.phone = phone;
+
     const seller = await prisma.users.update({
       where: { id: req.user.id },
-      data: { name, phone },
+      data,
     });
 
     res.json({ success: true, message: "Profile updated", seller });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * SELLER: Get company profile
+ */
+exports.getSellerProfile = async (req, res, next) => {
+  try {
+    const profile = await prisma.seller_profiles.findUnique({
+      where: { user_id: req.user.id },
+    });
+
+    res.json({ success: true, profile });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * SELLER: Create / Update company profile
+ */
+exports.upsertSellerProfile = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+
+    const {
+      company_name,
+      kra_pin,
+      company_location,
+      phone_primary,
+      phone_secondary,
+      website,
+      description,
+    } = req.body;
+
+    if (!company_name || !kra_pin || !company_location || !phone_primary) {
+      return res.status(400).json({ message: "Required fields missing" });
+    }
+
+    const profile = await prisma.seller_profiles.upsert({
+      where: { user_id: userId },
+      update: {
+        company_name,
+        kra_pin,
+        company_location,
+        phone_primary,
+        phone_secondary,
+        website,
+        description,
+      },
+      create: {
+        user_id: userId,
+        company_name,
+        kra_pin,
+        company_location,
+        phone_primary,
+        phone_secondary,
+        website,
+        description,
+      },
+    });
+
+    await prisma.audit_logs.create({
+      data: {
+        id: uuidv4(),
+        actor_id: userId,
+        action: "SELLER_PROFILE_UPDATED",
+        metadata: { seller_id: userId },
+      },
+    });
+
+    res.json({ success: true, profile });
   } catch (err) {
     next(err);
   }
@@ -53,7 +145,16 @@ exports.updateProfile = async (req, res, next) => {
 exports.getOrders = async (req, res, next) => {
   try {
     const orders = await prisma.orders.findMany({
-      where: { seller_id: req.user.id },
+      where: {
+        order_items: {
+          some: {
+            products: { seller_id: req.user.id },
+          },
+        },
+      },
+      include: {
+        order_items: { include: { products: true } },
+      },
       orderBy: { created_at: "desc" },
     });
 
@@ -64,45 +165,7 @@ exports.getOrders = async (req, res, next) => {
 };
 
 /**
- * SELLER: View notifications
- */
-exports.getNotifications = async (req, res, next) => {
-  try {
-    const notifications = await prisma.notifications.findMany({
-      where: { user_id: req.user.id },
-      orderBy: { created_at: "desc" },
-    });
-
-    res.json({ success: true, notifications });
-  } catch (err) {
-    next(err);
-  }
-};
-
-/**
- * SELLER: Mark notification as read (ownership enforced)
- */
-exports.markNotificationRead = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-
-    const updated = await prisma.notifications.updateMany({
-      where: { id, user_id: req.user.id },
-      data: { is_read: true },
-    });
-
-    if (!updated.count) {
-      return res.status(404).json({ message: "Notification not found" });
-    }
-
-    res.json({ success: true, message: "Notification marked as read" });
-  } catch (err) {
-    next(err);
-  }
-};
-
-/**
- * SELLER: Update order status (simple)
+ * SELLER: Update order status (WITH TRANSITION VALIDATION)
  */
 exports.updateOrderStatus = async (req, res, next) => {
   try {
@@ -114,15 +177,24 @@ exports.updateOrderStatus = async (req, res, next) => {
     }
 
     const order = await prisma.orders.findFirst({
-      where: { id, seller_id: req.user.id },
+      where: {
+        id,
+        order_items: {
+          some: {
+            products: { seller_id: req.user.id },
+          },
+        },
+      },
     });
 
     if (!order) {
       return res.status(404).json({ message: "Order not found" });
     }
 
-    if (["completed", "cancelled"].includes(order.status)) {
-      return res.status(400).json({ message: "Order already finalized" });
+    if (!(STATUS_TRANSITIONS[order.status] || []).includes(status)) {
+      return res.status(400).json({
+        message: `Cannot change order from ${order.status} to ${status}`,
+      });
     }
 
     const updatedOrder = await prisma.orders.update({
@@ -146,50 +218,40 @@ exports.updateOrderStatus = async (req, res, next) => {
 };
 
 /**
- * SELLER: Fulfill order (atomic + ledger safe)
+ * SELLER: Fulfill order (ledger safe)
  */
 exports.fulfillOrder = async (req, res, next) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
 
-    const transitions = {
-      pending: ["processing", "cancelled"],
-      processing: ["shipped", "cancelled"],
-      shipped: ["completed"],
-    };
-
     const order = await prisma.orders.findFirst({
-      where: { id, seller_id: req.user.id },
+      where: {
+        id,
+        order_items: {
+          some: {
+            products: { seller_id: req.user.id },
+          },
+        },
+      },
     });
 
     if (!order) {
       return res.status(404).json({ message: "Order not found" });
     }
 
-    if (["completed", "cancelled"].includes(order.status)) {
-      return res.status(400).json({ message: "Order already finalized" });
-    }
-
-    if (!(transitions[order.status] || []).includes(status)) {
+    if (!(STATUS_TRANSITIONS[order.status] || []).includes(status)) {
       return res.status(400).json({
         message: `Cannot change order from ${order.status} to ${status}`,
       });
     }
 
+    const total = Number(order.total);
+
     const result = await prisma.$transaction(async (tx) => {
       const updatedOrder = await tx.orders.update({
         where: { id },
         data: { status },
-      });
-
-      await tx.audit_logs.create({
-        data: {
-          id: uuidv4(),
-          actor_id: req.user.id,
-          action: "ORDER_FULFILLED",
-          metadata: { order_id: id, from: order.status, to: status },
-        },
       });
 
       if (status === "completed") {
@@ -205,8 +267,8 @@ exports.fulfillOrder = async (req, res, next) => {
           throw new Error("Ledger accounts not configured");
         }
 
-        const commission = order.total * COMMISSION_RATE;
-        const sellerAmount = order.total - commission;
+        const commission = total * COMMISSION_RATE;
+        const sellerAmount = total - commission;
         const txId = uuidv4();
 
         await tx.transactions.create({
@@ -251,103 +313,23 @@ exports.fulfillOrder = async (req, res, next) => {
 };
 
 /**
- * SELLER: Wallet balance
- */
-exports.getBalance = async (req, res, next) => {
-  try {
-    const account = await prisma.accounts.findFirst({
-      where: { owner_id: req.user.id, owner_type: "user" },
-    });
-
-    if (!account) {
-      return res.status(404).json({ message: "Account not found" });
-    }
-
-    const sum = await prisma.entries.aggregate({
-      where: { account_id: account.id },
-      _sum: { amount: true },
-    });
-
-    res.json({
-      success: true,
-      balance: sum._sum.amount || 0,
-      currency: account.currency,
-    });
-  } catch (err) {
-    next(err);
-  }
-};
-
-/**
- * SELLER: Transactions
- */
-exports.getTransactions = async (req, res, next) => {
-  try {
-    const account = await prisma.accounts.findFirst({
-      where: { owner_id: req.user.id, owner_type: "user" },
-    });
-
-    if (!account) {
-      return res.status(404).json({ message: "Account not found" });
-    }
-
-    const entries = await prisma.entries.findMany({
-      where: { account_id: account.id },
-      include: {
-        transaction: true,
-      },
-      orderBy: { created_at: "desc" },
-    });
-
-    res.json({
-      success: true,
-      transactions: entries.map((e) => ({
-        amount: e.amount,
-        type: e.amount > 0 ? "credit" : "debit",
-        reference: e.transaction.reference,
-        description: e.transaction.description,
-        date: e.created_at,
-      })),
-    });
-  } catch (err) {
-    next(err);
-  }
-};
-
-/**
- * SELLER: Payouts
- */
-exports.getPayouts = async (req, res, next) => {
-  try {
-    const payouts = await prisma.payments.findMany({
-      where: {
-        provider: "payout",
-        status: "success",
-        phone: req.user.phone,
-      },
-      orderBy: { created_at: "desc" },
-    });
-
-    res.json({ success: true, payouts });
-  } catch (err) {
-    next(err);
-  }
-};
-
-/**
  * SELLER: Approval status
  */
 exports.checkApprovalStatus = async (req, res, next) => {
   try {
     const seller = await prisma.users.findUnique({
       where: { id: req.user.id },
-      select: { is_active: true },
+      select: { isApprovedSeller: true, is_active: true },
     });
 
     res.json({
       success: true,
-      approved: seller.is_active,
-      status: seller.is_active ? "approved" : "pending",
+      approved: seller.isApprovedSeller,
+      status: !seller.isApprovedSeller
+        ? "pending"
+        : seller.is_active
+        ? "approved"
+        : "suspended",
     });
   } catch (err) {
     next(err);
@@ -355,48 +337,72 @@ exports.checkApprovalStatus = async (req, res, next) => {
 };
 
 /**
- * SELLER: Dashboard stats
+ * SELLER: Upload KRA certificate (SAFE UPSERT)
  */
-exports.getSellerStats = async (req, res, next) => {
+exports.uploadKraCertificate = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "File required" });
+    }
+
+    const profile = await prisma.seller_profiles.upsert({
+      where: { user_id: req.user.id },
+      update: {
+        kra_certificate: req.file.path,
+        is_verified: false,
+      },
+      create: {
+        user_id: req.user.id,
+        kra_certificate: req.file.path,
+        is_verified: false,
+      },
+    });
+
+    res.json({ success: true, profile });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * SELLER: Dashboard charts
+ */
+exports.getSellerDashboardCharts = async (req, res, next) => {
   try {
     const sellerId = req.user.id;
 
-    const account = await prisma.accounts.findFirst({
-      where: { owner_id: sellerId, owner_type: "user" },
+    const ordersByStatus = await prisma.orders.groupBy({
+      by: ["status"],
+      where: {
+        order_items: {
+          some: {
+            products: { seller_id: sellerId },
+          },
+        },
+      },
+      _count: true,
     });
 
-    const [
-      totalProducts,
-      activeProducts,
-      orders,
-      ledger,
-    ] = await Promise.all([
-      prisma.products.count({ where: { seller_id: sellerId } }),
-      prisma.products.count({ where: { seller_id: sellerId, is_active: true } }),
-      prisma.orders.groupBy({
-        by: ["status"],
-        where: { seller_id: sellerId },
-        _count: true,
-      }),
-      prisma.entries.aggregate({
-        where: { account_id: account?.id },
-        _sum: { amount: true },
-      }),
-    ]);
-
-    const orderStats = Object.fromEntries(
-      orders.map((o) => [o.status, o._count])
-    );
+    const monthlySales = await prisma.orders.findMany({
+      where: {
+        status: "completed",
+        order_items: {
+          some: {
+            products: { seller_id: sellerId },
+          },
+        },
+      },
+      select: {
+        total: true,
+        created_at: true,
+      },
+    });
 
     res.json({
       success: true,
-      stats: {
-        products: { total: totalProducts, active: activeProducts },
-        orders: orderStats,
-        earnings: {
-          balance: ledger._sum.amount || 0,
-          currency: "KES",
-        },
+      charts: {
+        ordersByStatus,
+        monthlySales,
       },
     });
   } catch (err) {

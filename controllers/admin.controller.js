@@ -9,29 +9,24 @@ const {
 } = require("../services/user.service");
 
 /**
- * REGISTER ADMIN (ADMIN ONLY)
+ * REGISTER ADMIN
+ * - First admin: uses ADMIN_SECRET_KEY
+ * - Next admins: admin-only
  */
 exports.registerAdmin = async (req, res, next) => {
   try {
     const { name, email, phone, password, adminSecret } = req.body;
 
-    // 1️⃣ Check if any admin exists
     const existingAdmin = await prisma.users.findFirst({
       where: { role: "admin" },
       select: { id: true },
     });
 
-    // 2️⃣ CASE A: NO ADMIN EXISTS (FIRST ADMIN)
     if (!existingAdmin) {
       if (adminSecret !== process.env.ADMIN_SECRET_KEY) {
-        return res.status(403).json({
-          message: "Invalid admin secret key",
-        });
+        return res.status(403).json({ message: "Invalid admin secret key" });
       }
-    }
-
-    // 3️⃣ CASE B: ADMIN EXISTS → REQUIRE AUTH ADMIN
-    if (existingAdmin) {
+    } else {
       if (!req.user || req.user.role !== "admin") {
         return res.status(403).json({
           message: "Only admins can create another admin",
@@ -39,21 +34,16 @@ exports.registerAdmin = async (req, res, next) => {
       }
     }
 
-    // 4️⃣ Duplicate email check
     const existingUser = await prisma.users.findUnique({
       where: { email },
     });
 
     if (existingUser) {
-      return res.status(400).json({
-        message: "Email already exists",
-      });
+      return res.status(400).json({ message: "Email already exists" });
     }
 
-    // 5️⃣ Hash password
     const password_hash = await bcrypt.hash(password, 12);
 
-    // 6️⃣ Create admin
     const user = await createUserWithAccount({
       name,
       email,
@@ -62,7 +52,6 @@ exports.registerAdmin = async (req, res, next) => {
       role: "admin",
     });
 
-    // 7️⃣ Issue tokens ONLY for first admin or self-register
     const token = signToken({ id: user.id, role: user.role });
     const refreshToken = signRefreshToken({ id: user.id });
 
@@ -75,7 +64,7 @@ exports.registerAdmin = async (req, res, next) => {
       },
     });
 
-    return res.status(201).json({
+    res.status(201).json({
       success: true,
       message: "Admin registered successfully",
       token,
@@ -92,8 +81,6 @@ exports.registerAdmin = async (req, res, next) => {
   }
 };
 
-
-
 /**
  * ADMIN LOGIN
  */
@@ -102,13 +89,8 @@ exports.adminLogin = async (req, res, next) => {
     const { email, password } = req.body;
 
     const user = await findUserByEmail(email);
-    if (!user) {
+    if (!user || user.role !== "admin") {
       return res.status(401).json({ message: "Invalid credentials" });
-    }
-
-    // 🚫 Only admins allowed
-    if (user.role !== "admin") {
-      return res.status(403).json({ message: "Access denied" });
     }
 
     const match = await bcrypt.compare(password, user.password_hash);
@@ -116,14 +98,8 @@ exports.adminLogin = async (req, res, next) => {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
-    const token = signToken({
-      id: user.id,
-      role: user.role,
-    });
-
-    const refreshToken = signRefreshToken({
-      id: user.id,
-    });
+    const token = signToken({ id: user.id, role: user.role });
+    const refreshToken = signRefreshToken({ id: user.id });
 
     await prisma.refresh_tokens.create({
       data: {
@@ -151,12 +127,12 @@ exports.adminLogin = async (req, res, next) => {
 };
 
 /**
- * ADMIN: View all users (paginated)
+ * ADMIN: View all users
  */
 exports.getAllUsers = async (req, res, next) => {
   try {
-    const page = Math.max(parseInt(req.query.page) || 1, 1);
-    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const page = Math.max(Number(req.query.page) || 1, 1);
+    const limit = Math.min(Number(req.query.limit) || 20, 100);
     const skip = (page - 1) * limit;
 
     const [users, total] = await Promise.all([
@@ -171,26 +147,21 @@ exports.getAllUsers = async (req, res, next) => {
           phone: true,
           role: true,
           is_active: true,
+          isApprovedSeller: true,
           created_at: true,
         },
       }),
       prisma.users.count(),
     ]);
 
-    res.json({
-      success: true,
-      page,
-      limit,
-      total,
-      users,
-    });
+    res.json({ success: true, page, limit, total, users });
   } catch (err) {
     next(err);
   }
 };
 
 /**
- * ADMIN: Approve a seller
+ * ADMIN: Approve seller
  */
 exports.approveSeller = async (req, res, next) => {
   try {
@@ -198,19 +169,10 @@ exports.approveSeller = async (req, res, next) => {
 
     const seller = await prisma.users.findUnique({
       where: { id: userId },
-      select: {
-        id: true,
-        role: true,
-        isApprovedSeller: true,
-      },
     });
 
-    if (!seller) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    if (seller.role !== "seller") {
-      return res.status(400).json({ message: "User is not a seller" });
+    if (!seller || seller.role !== "seller") {
+      return res.status(404).json({ message: "Seller not found" });
     }
 
     if (seller.isApprovedSeller) {
@@ -220,7 +182,6 @@ exports.approveSeller = async (req, res, next) => {
     await prisma.users.update({
       where: { id: userId },
       data: { isApprovedSeller: true, is_active: true },
-      
     });
 
     await prisma.audit_logs.create({
@@ -245,105 +206,70 @@ exports.approveSeller = async (req, res, next) => {
 };
 
 /**
- * ADMIN: View pending sellers
+ * ADMIN: Pending sellers
  */
 exports.getPendingSellers = async (req, res, next) => {
   try {
-    const page = Math.max(parseInt(req.query.page) || 1, 1);
-    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
-    const skip = (page - 1) * limit;
-
-    const [sellers, total] = await Promise.all([
-      prisma.users.findMany({
-        where: {
-          role: "seller",
-          is_active: false,
-        },
-        skip,
-        take: limit,
-        orderBy: { created_at: "asc" },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          phone: true,
-          created_at: true,
-        },
-      }),
-      prisma.users.count({
-        where: {
-          role: "seller",
-          is_active: false,
-        },
-      }),
-    ]);
-
-    res.json({
-      success: true,
-      page,
-      limit,
-      total,
-      sellers,
-    });
-  } catch (err) {
-    next(err);
-  }
-};
-
-// Admin Reject seller
-exports.rejectSeller = async (req, res, next) => {
-  try {
-    const { userId } = req.params;
-    const { reason } = req.body; // optional
-
-    const seller = await prisma.users.findUnique({
-      where: { id: userId },
-      select: { id: true, role: true, is_active: true },
-    });
-
-    if (!seller) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    if (seller.role !== "seller") {
-      return res.status(400).json({ message: "User is not a seller" });
-    }
-
-    if (seller.is_active) {
-      return res.status(400).json({ message: "Seller already approved" });
-    }
-
-    // 🧾 Audit rejection (no state change needed; seller remains inactive)
-    await prisma.audit_logs.create({
-      data: {
-        id: uuidv4(),
-        actor_id: req.user.id, // admin
-        action: "SELLER_REJECTED",
-        metadata: {
-          seller_id: userId,
-          reason: reason || null,
-        },
+    const sellers = await prisma.users.findMany({
+      where: {
+        role: "seller",
+        is_active: false,
+      },
+      orderBy: { created_at: "asc" },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        created_at: true,
       },
     });
 
-    // 🔔 Notify seller
-await notifyUser({
-  userId,
-  title: "Seller Application Rejected",
-  message: reason || "Your seller application was not approved at this time.",
-});
-
-    res.json({
-      success: true,
-      message: "Seller rejected successfully",
-    });
+    res.json({ success: true, sellers });
   } catch (err) {
     next(err);
   }
 };
 
 /**
- * ADMIN: Toggle user active/inactive
+ * ADMIN: Reject seller
+ */
+exports.rejectSeller = async (req, res, next) => {
+  try {
+    const { userId } = req.params;
+    const { reason } = req.body;
+
+    const seller = await prisma.users.findUnique({
+      where: { id: userId },
+    });
+
+    if (!seller || seller.role !== "seller") {
+      return res.status(404).json({ message: "Seller not found" });
+    }
+
+    await prisma.audit_logs.create({
+      data: {
+        id: uuidv4(),
+        actor_id: req.user.id,
+        action: "SELLER_REJECTED",
+        metadata: { seller_id: userId, reason: reason || null },
+      },
+    });
+
+    await notifyUser({
+      userId,
+      title: "Seller Application Rejected",
+      message: reason || "Your seller application was rejected.",
+    });
+
+    res.json({ success: true, message: "Seller rejected successfully" });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * ADMIN: Toggle user active
  */
 exports.toggleUserActive = async (req, res, next) => {
   try {
@@ -351,12 +277,9 @@ exports.toggleUserActive = async (req, res, next) => {
 
     const user = await prisma.users.findUnique({
       where: { id: userId },
-      select: { id: true, is_active: true, role: true },
     });
 
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
+    if (!user) return res.status(404).json({ message: "User not found" });
 
     const newStatus = !user.is_active;
 
@@ -365,7 +288,6 @@ exports.toggleUserActive = async (req, res, next) => {
       data: { is_active: newStatus },
     });
 
-    // Audit
     await prisma.audit_logs.create({
       data: {
         id: uuidv4(),
@@ -377,9 +299,7 @@ exports.toggleUserActive = async (req, res, next) => {
 
     res.json({
       success: true,
-      message: newStatus
-        ? "User activated successfully"
-        : "User suspended successfully",
+      message: newStatus ? "User activated" : "User suspended",
     });
   } catch (err) {
     next(err);
@@ -387,159 +307,82 @@ exports.toggleUserActive = async (req, res, next) => {
 };
 
 /**
- * ADMIN: Delete user (soft delete)
+ * ADMIN: Permanent delete user (transaction safe)
  */
 exports.deleteUser = async (req, res, next) => {
   try {
     const { userId } = req.params;
 
-    // ❌ Prevent admin from deleting themselves
     if (req.user.id === userId) {
-      return res.status(400).json({
-        message: "You cannot delete your own account",
-      });
+      return res.status(400).json({ message: "You cannot delete yourself" });
     }
 
     const user = await prisma.users.findUnique({
       where: { id: userId },
-      select: { id: true, role: true },
     });
 
-    if (!user) {
-      return res.status(404).json({
-        message: "User not found",
-      });
-    }
-
-    // ❌ Never delete admins (optional but recommended)
+    if (!user) return res.status(404).json({ message: "User not found" });
     if (user.role === "admin") {
-      return res.status(403).json({
-        message: "Admins cannot be deleted",
-      });
+      return res.status(403).json({ message: "Admins cannot be deleted" });
     }
 
-    /* =====================================================
-       🔥 HARD DELETE — TRANSACTION SAFE
-    ===================================================== */
     await prisma.$transaction(async (tx) => {
-      // Auth
       await tx.refresh_tokens.deleteMany({ where: { user_id: userId } });
-    
-      // Messaging
-      await tx.messages.deleteMany({
-        where: {
-          OR: [
-            { sender_id: userId },
-            { receiver_id: userId },
-            { deleted_by: userId },
-          ],
-        },
-      });
-    
-      await tx.conversations.deleteMany({
-        where: {
-          OR: [{ buyer_id: userId }, { seller_id: userId }],
-        },
-      });
-    
-      // Notifications
       await tx.notifications.deleteMany({ where: { user_id: userId } });
-    
-      // Commerce (buyer)
-      await tx.order_items.deleteMany({
-        where: { orders: { buyer_id: userId } },
-      });
-    
-      await tx.orders.deleteMany({ where: { buyer_id: userId } });
-    
-      // Commerce (seller)
-      await tx.productimage.deleteMany({
-        where: { products: { seller_id: userId } },
-      });
-    
-      await tx.products.deleteMany({ where: { seller_id: userId } });
-    
-      // Analytics
-      await tx.product_views.deleteMany({
-        where: {
-          OR: [{ buyer_id: userId }, { seller_id: userId }],
-        },
-      });
-    
-      await tx.buyer_visits.deleteMany({
-        where: {
-          OR: [{ buyer_id: userId }, { seller_id: userId }],
-        },
-      });
-    
-      // Accounting
       await tx.entries.deleteMany({
         where: { accounts: { owner_id: userId } },
       });
-    
       await tx.accounts.deleteMany({
         where: { owner_id: userId, owner_type: "user" },
       });
-    
-      // 🔥 USER LAST
       await tx.users.delete({ where: { id: userId } });
     });
-    
-    // 🧾 Audit log (NEVER deleted)
+
     await prisma.audit_logs.create({
       data: {
         id: uuidv4(),
-        actor_id: req.user.id, // admin
+        actor_id: req.user.id,
         action: "USER_PERMANENTLY_DELETED",
-        metadata: {
-          deleted_user_id: userId,
-          role: user.role,
-        },
+        metadata: { deleted_user_id: userId, role: user.role },
       },
     });
 
-    return res.status(200).json({
-      success: true,
-      message: "User permanently deleted",
-    });
+    res.json({ success: true, message: "User permanently deleted" });
   } catch (err) {
     next(err);
   }
 };
 
-
-
 /**
- * ADMIN: View audit logs (paginated)
+ * ADMIN: Audit logs
  */
 exports.getAuditLogs = async (req, res, next) => {
   try {
-    const page = Math.max(parseInt(req.query.page) || 1, 1);
-    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
-    const skip = (page - 1) * limit;
+    const logs = await prisma.audit_logs.findMany({
+      orderBy: { created_at: "desc" },
+    });
 
-    const [logs, total] = await Promise.all([
-      prisma.audit_logs.findMany({
-        skip,
-        take: limit,
-        orderBy: { created_at: "desc" },
-        select: {
-          id: true,
-          actor_id: true,
-          action: true,
-          metadata: true,
-          created_at: true,
-        },
-      }),
+    res.json({ success: true, logs });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * ADMIN: Dashboard stats
+ */
+exports.getAdminStats = async (req, res, next) => {
+  try {
+    const [users, sellers, buyers, audits] = await Promise.all([
+      prisma.users.count(),
+      prisma.users.count({ where: { role: "seller" } }),
+      prisma.users.count({ where: { role: "buyer" } }),
       prisma.audit_logs.count(),
     ]);
 
     res.json({
       success: true,
-      page,
-      limit,
-      total,
-      logs,
+      stats: { users, sellers, buyers, audits },
     });
   } catch (err) {
     next(err);
@@ -547,90 +390,11 @@ exports.getAuditLogs = async (req, res, next) => {
 };
 
 /**
- * ADMIN: Dashboard statistics
+ * ADMIN: Refund disputed order (LEDGER SAFE)
  */
-exports.getAdminStats = async (req, res, next) => {
-  try {
-    const [
-      // 👤 Users (all roles)
-      totalUsers,
-      activeUsers,
-      suspendedUsers,
-
-      // 👮 Admins
-      totalAdmins,
-
-      // 🛒 Sellers
-      totalSellers,
-      activeSellers,
-      suspendedSellers,
-      pendingSellers,
-
-      // 🧑 Buyers
-      totalBuyers,
-      activeBuyers,
-      suspendedBuyers,
-
-      // 🧾 Audit
-      auditCount,
-    ] = await Promise.all([
-      // Users
-      prisma.users.count(),
-      prisma.users.count({ where: { is_active: true } }),
-      prisma.users.count({ where: { is_active: false } }),
-
-      // Admins
-      prisma.users.count({ where: { role: "admin" } }),
-
-      // Sellers
-      prisma.users.count({ where: { role: "seller" } }),
-      prisma.users.count({ where: { role: "seller", is_active: true } }),
-      prisma.users.count({ where: { role: "seller", is_active: false } }),
-      prisma.users.count({
-        where: { role: "seller", is_active: false },
-      }),
-
-      // Buyers
-      prisma.users.count({ where: { role: "buyer" } }),
-      prisma.users.count({ where: { role: "buyer", is_active: true } }),
-      prisma.users.count({ where: { role: "buyer", is_active: false } }),
-
-      // Audit logs
-      prisma.audit_logs.count(),
-    ]);
-
-    res.json({
-      success: true,
-      stats: {
-        users: {
-          total: totalUsers,
-          active: activeUsers,
-          suspended: suspendedUsers,
-        },
-        admins: totalAdmins,
-        sellers: {
-          total: totalSellers,
-          active: activeSellers,
-          pending: pendingSellers,
-          suspended: suspendedSellers,
-        },
-        buyers: {
-          total: totalBuyers,
-          active: activeBuyers,
-          suspended: suspendedBuyers,
-        },
-        audit_logs: auditCount,
-      },
-    });
-  } catch (err) {
-    next(err);
-  }
-};
-
 exports.refundOrder = async (req, res, next) => {
   try {
     const { orderId } = req.params;
-    const { v4: uuidv4 } = require("uuid");
 
     const order = await prisma.orders.findUnique({
       where: { id: orderId },
@@ -640,58 +404,57 @@ exports.refundOrder = async (req, res, next) => {
       return res.status(400).json({ message: "Invalid refund request" });
     }
 
-    const sellerAccount = await prisma.accounts.findFirst({
-      where: { owner_id: order.seller_id, owner_type: "user" },
+    await prisma.$transaction(async (tx) => {
+      const txId = uuidv4();
+
+      await tx.transactions.create({
+        data: {
+          id: txId,
+          reference: `REFUND-${order.id}`,
+          description: "Order refund",
+        },
+      });
+
+      const sellerAccount = await tx.accounts.findFirst({
+        where: { owner_id: order.seller_id, owner_type: "user" },
+      });
+
+      const buyerAccount = await tx.accounts.findFirst({
+        where: { owner_id: order.buyer_id, owner_type: "user" },
+      });
+
+      await tx.entries.createMany({
+        data: [
+          {
+            id: uuidv4(),
+            transaction_id: txId,
+            account_id: sellerAccount.id,
+            amount: -order.total,
+          },
+          {
+            id: uuidv4(),
+            transaction_id: txId,
+            account_id: buyerAccount.id,
+            amount: order.total,
+          },
+        ],
+      });
+
+      await tx.orders.update({
+        where: { id: orderId },
+        data: { status: "refunded" },
+      });
     });
 
-    const buyerAccount = await prisma.accounts.findFirst({
-      where: { owner_id: order.buyer_id, owner_type: "user" },
-    });
-
-    const txId = uuidv4();
-
-    await prisma.transactions.create({
-      data: {
-        id: txId,
-        reference: `REFUND-${order.id}`,
-        description: "Order refund",
-      },
-    });
-
-    // Debit seller
-    await prisma.entries.create({
-      data: {
-        id: uuidv4(),
-        transaction_id: txId,
-        account_id: sellerAccount.id,
-        amount: -order.total,
-      },
-    });
-
-    // Credit buyer
-    await prisma.entries.create({
-      data: {
-        id: uuidv4(),
-        transaction_id: txId,
-        account_id: buyerAccount.id,
-        amount: order.total,
-      },
-    });
-
-    await prisma.orders.update({
-      where: { id: orderId },
-      data: { status: "refunded" },
-    });
-
-    res.json({
-      success: true,
-      message: "Order refunded successfully",
-    });
+    res.json({ success: true, message: "Order refunded successfully" });
   } catch (err) {
     next(err);
   }
 };
 
+/**
+ * ADMIN: Disputed orders
+ */
 exports.getDisputedOrders = async (req, res, next) => {
   try {
     const orders = await prisma.orders.findMany({
@@ -699,93 +462,63 @@ exports.getDisputedOrders = async (req, res, next) => {
       orderBy: { created_at: "asc" },
     });
 
-    res.json({
-      success: true,
-      orders,
-    });
+    res.json({ success: true, orders });
   } catch (err) {
     next(err);
   }
 };
 
 /**
- * ADMIN: View all sellers (approved + pending + suspended)
+ * ADMIN: Sellers list + profiles
  */
-exports.getAllSellers = async (req, res, next) => {
+exports.getAllSellerProfiles = async (req, res, next) => {
   try {
-    const page = Math.max(parseInt(req.query.page) || 1, 1);
-    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
-    const skip = (page - 1) * limit;
-
-    const [sellers, total] = await Promise.all([
-      prisma.users.findMany({
-        where: { role: "seller" },
-        skip,
-        take: limit,
-        orderBy: { created_at: "desc" },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          phone: true,
-          is_active: true,        
-          isApprovedSeller: true,   
-          created_at: true,
-        },
-      }),
-      prisma.users.count({
-        where: { role: "seller" },
-      }),
-    ]);
-
-    res.json({
-      success: true,
-      page,
-      limit,
-      total,
-      sellers,
+    const sellers = await prisma.users.findMany({
+      where: { role: "seller" },
+      include: { seller_profile: true },
+      orderBy: { created_at: "desc" },
     });
+
+    res.json({ success: true, sellers });
   } catch (err) {
     next(err);
   }
 };
 
-
-exports.getAllBuyers = async (req, res, next) => {
+exports.getSellerProfileById = async (req, res, next) => {
   try {
-    const page = Math.max(parseInt(req.query.page) || 1, 1);
-    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
-    const skip = (page - 1) * limit;
-
-    const [buyers, total] = await Promise.all([
-      prisma.users.findMany({
-        where: {
-          role: "buyer",
-        },
-        skip,
-        take: limit,
-        orderBy: { created_at: "desc" },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          phone: true,
-          is_active: true,
-          created_at: true,
-        },
-      }),
-      prisma.users.count({
-        where: { role: "buyer" },
-      }),
-    ]);
-
-    res.json({
-      success: true,
-      page,
-      limit,
-      total,
-      buyers,
+    const seller = await prisma.users.findUnique({
+      where: { id: req.params.sellerId },
+      include: { seller_profile: true },
     });
+
+    if (!seller) {
+      return res.status(404).json({ message: "Seller not found" });
+    }
+
+    res.json({ success: true, seller });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.verifySeller = async (req, res, next) => {
+  try {
+    const { sellerId } = req.params;
+
+    await prisma.$transaction(async (tx) => {
+      await tx.seller_profiles.update({
+        where: { user_id: sellerId },
+        data: { is_verified: true },
+      });
+
+      await tx.users.update({
+        where: { id: sellerId },
+        data: { isApprovedSeller: true, is_active: true },
+      });
+    });
+
+    res.json({ success: true, message: "Seller verified & approved" });
   } catch (err) {
     next(err);
   }
