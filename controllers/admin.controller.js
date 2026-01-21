@@ -241,28 +241,51 @@ exports.rejectSeller = async (req, res, next) => {
 
     const seller = await prisma.users.findUnique({
       where: { id: userId },
+      select: {
+        id: true,
+        role: true,
+        isApprovedSeller: true,
+        is_active: true,
+      },
     });
 
     if (!seller || seller.role !== "seller") {
       return res.status(404).json({ message: "Seller not found" });
     }
 
+    // ❗ Mark seller as REJECTED (persist state)
+    await prisma.users.update({
+      where: { id: userId },
+      data: {
+        isApprovedSeller: false,
+        is_active: false,
+      },
+    });
+
+    // 🧾 Audit
     await prisma.audit_logs.create({
       data: {
         id: uuidv4(),
         actor_id: req.user.id,
         action: "SELLER_REJECTED",
-        metadata: { seller_id: userId, reason: reason || null },
+        metadata: {
+          seller_id: userId,
+          reason: reason || null,
+        },
       },
     });
 
+    // 🔔 Notify seller
     await notifyUser({
       userId,
       title: "Seller Application Rejected",
       message: reason || "Your seller application was rejected.",
     });
 
-    res.json({ success: true, message: "Seller rejected successfully" });
+    res.json({
+      success: true,
+      message: "Seller rejected successfully",
+    });
   } catch (err) {
     next(err);
   }
@@ -373,21 +396,177 @@ exports.getAuditLogs = async (req, res, next) => {
  */
 exports.getAdminStats = async (req, res, next) => {
   try {
-    const [users, sellers, buyers, audits] = await Promise.all([
+    const [
+      // ================= USERS =================
+      totalUsers,
+      activeUsers,
+      suspendedUsers,
+      totalAdmins,
+      totalBuyers,
+      totalSellers,
+
+      // ================= SELLERS =================
+      approvedSellers,
+      pendingSellers,
+      suspendedSellers,
+      verifiedSellers,
+      sellersWithProducts,
+      sellersWithoutProducts,
+
+      // ================= ORDERS =================
+      totalOrders,
+      ordersByStatus,
+      disputedOrders,
+
+      // ================= REVENUE =================
+      completedOrders,
+      todayRevenue,
+      monthRevenue,
+
+      // ================= MARKETPLACE =================
+      totalProducts,
+      activeProducts,
+      inactiveProducts,
+      productViews,
+      buyerVisits,
+
+      // ================= SYSTEM =================
+      auditLogs,
+      pendingPayments,
+      failedPayments,
+      unreadNotifications,
+    ] = await Promise.all([
+      // USERS
       prisma.users.count(),
-      prisma.users.count({ where: { role: "seller" } }),
+      prisma.users.count({ where: { is_active: true } }),
+      prisma.users.count({ where: { is_active: false } }),
+      prisma.users.count({ where: { role: "admin" } }),
       prisma.users.count({ where: { role: "buyer" } }),
+      prisma.users.count({ where: { role: "seller" } }),
+
+      // SELLERS
+      prisma.users.count({
+        where: { role: "seller", isApprovedSeller: true },
+      }),
+      prisma.users.count({
+        where: { role: "seller", isApprovedSeller: false },
+      }),
+      prisma.users.count({
+        where: { role: "seller", isApprovedSeller: true, is_active: false },
+      }),
+      prisma.seller_profiles.count({
+        where: { is_verified: true },
+      }),
+      prisma.products.groupBy({
+        by: ["seller_id"],
+      }).then(r => r.length),
+      prisma.users.count({
+        where: {
+          role: "seller",
+          products: { none: {} },
+        },
+      }),
+
+      // ORDERS
+      prisma.orders.count(),
+      prisma.orders.groupBy({
+        by: ["status"],
+        _count: true,
+      }),
+      prisma.orders.count({
+        where: { status: "disputed" },
+      }),
+
+      // REVENUE
+      prisma.orders.aggregate({
+        where: { status: "completed" },
+        _sum: { total: true },
+      }),
+      prisma.orders.aggregate({
+        where: {
+          status: "completed",
+          created_at: {
+            gte: new Date(new Date().setHours(0, 0, 0, 0)),
+          },
+        },
+        _sum: { total: true },
+      }),
+      prisma.orders.aggregate({
+        where: {
+          status: "completed",
+          created_at: {
+            gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+          },
+        },
+        _sum: { total: true },
+      }),
+
+      // MARKETPLACE
+      prisma.products.count(),
+      prisma.products.count({ where: { is_active: true } }),
+      prisma.products.count({ where: { is_active: false } }),
+      prisma.product_views.count(),
+      prisma.buyer_visits.count(),
+
+      // SYSTEM
       prisma.audit_logs.count(),
+      prisma.payments.count({ where: { status: "pending" } }),
+      prisma.payments.count({ where: { status: "failed" } }),
+      prisma.notifications.count({ where: { is_read: false } }),
     ]);
 
     res.json({
       success: true,
-      stats: { users, sellers, buyers, audits },
+      stats: {
+        users: {
+          total: totalUsers,
+          active: activeUsers,
+          suspended: suspendedUsers,
+          admins: totalAdmins,
+          buyers: totalBuyers,
+          sellers: totalSellers,
+        },
+        sellers: {
+          total: totalSellers,
+          approved: approvedSellers,
+          pending: pendingSellers,
+          suspended: suspendedSellers,
+          verified: verifiedSellers,
+          with_products: sellersWithProducts,
+          without_products: sellersWithoutProducts,
+        },
+        orders: {
+          total: totalOrders,
+          by_status: ordersByStatus,
+          disputed: disputedOrders,
+        },
+        revenue: {
+          total: completedOrders._sum.total || 0,
+          today: todayRevenue._sum.total || 0,
+          this_month: monthRevenue._sum.total || 0,
+        },
+        marketplace: {
+          products: {
+            total: totalProducts,
+            active: activeProducts,
+            inactive: inactiveProducts,
+          },
+          product_views: productViews,
+          buyer_visits: buyerVisits,
+        },
+        system: {
+          audit_logs: auditLogs,
+          pending_payments: pendingPayments,
+          failed_payments: failedPayments,
+          unread_notifications: unreadNotifications,
+        },
+      },
     });
   } catch (err) {
     next(err);
   }
 };
+
 
 /**
  * ADMIN: Refund disputed order (LEDGER SAFE)
@@ -502,27 +681,6 @@ exports.getSellerProfileById = async (req, res, next) => {
   }
 };
 
-exports.verifySeller = async (req, res, next) => {
-  try {
-    const { sellerId } = req.params;
-
-    await prisma.$transaction(async (tx) => {
-      await tx.seller_profiles.update({
-        where: { user_id: sellerId },
-        data: { is_verified: true },
-      });
-
-      await tx.users.update({
-        where: { id: sellerId },
-        data: { isApprovedSeller: true, is_active: true },
-      });
-    });
-
-    res.json({ success: true, message: "Seller verified & approved" });
-  } catch (err) {
-    next(err);
-  }
-};
 
 exports.getAllBuyers = async (req, res, next) => {
   try {
