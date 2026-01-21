@@ -422,27 +422,69 @@ exports.deleteUser = async (req, res, next) => {
        🔥 HARD DELETE — TRANSACTION SAFE
     ===================================================== */
     await prisma.$transaction(async (tx) => {
-      // 1️⃣ Delete refresh tokens (AUTH dependency)
-      await tx.refresh_tokens.deleteMany({
-        where: { user_id: userId },
+      // Auth
+      await tx.refresh_tokens.deleteMany({ where: { user_id: userId } });
+    
+      // Messaging
+      await tx.messages.deleteMany({
+        where: {
+          OR: [
+            { sender_id: userId },
+            { receiver_id: userId },
+            { deleted_by: userId },
+          ],
+        },
       });
-
-      // 2️⃣ Delete buyer orders
-      await tx.orders.deleteMany({
-        where: { buyer_id: userId },
+    
+      await tx.conversations.deleteMany({
+        where: {
+          OR: [{ buyer_id: userId }, { seller_id: userId }],
+        },
       });
-
-      // 3️⃣ Delete seller products
-      await tx.products.deleteMany({
-        where: { seller_id: userId },
+    
+      // Notifications
+      await tx.notifications.deleteMany({ where: { user_id: userId } });
+    
+      // Commerce (buyer)
+      await tx.order_items.deleteMany({
+        where: { orders: { buyer_id: userId } },
       });
-
-      // 4️⃣ 🔥 Hard delete user
-      await tx.users.delete({
-        where: { id: userId },
+    
+      await tx.orders.deleteMany({ where: { buyer_id: userId } });
+    
+      // Commerce (seller)
+      await tx.productimage.deleteMany({
+        where: { products: { seller_id: userId } },
       });
+    
+      await tx.products.deleteMany({ where: { seller_id: userId } });
+    
+      // Analytics
+      await tx.product_views.deleteMany({
+        where: {
+          OR: [{ buyer_id: userId }, { seller_id: userId }],
+        },
+      });
+    
+      await tx.buyer_visits.deleteMany({
+        where: {
+          OR: [{ buyer_id: userId }, { seller_id: userId }],
+        },
+      });
+    
+      // Accounting
+      await tx.entries.deleteMany({
+        where: { accounts: { owner_id: userId } },
+      });
+    
+      await tx.accounts.deleteMany({
+        where: { owner_id: userId, owner_type: "user" },
+      });
+    
+      // 🔥 USER LAST
+      await tx.users.delete({ where: { id: userId } });
     });
-
+    
     // 🧾 Audit log (NEVER deleted)
     await prisma.audit_logs.create({
       data: {
