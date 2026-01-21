@@ -60,4 +60,9 @@ router.get("/stats",protect,allowRoles("admin"),
   adminController.getAdminStats
 );
 
+router.put("/orders/dispute-close/:orderId",
+  protect,
+  allowRoles("admin"),
+  adminController.closeDispute);
+
 module.exports = router;

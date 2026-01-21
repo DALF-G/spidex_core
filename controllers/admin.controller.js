@@ -394,57 +394,49 @@ exports.getAuditLogs = async (req, res, next) => {
 /**
  * ADMIN: Dashboard stats
  */
+/* =========================
+   SIMPLE IN-MEMORY CACHE
+========================= */
+let cachedStats = null;
+let lastFetch = 0;
+const CACHE_TTL = 30 * 1000; // 30 seconds
+
+/* =========================
+   ADMIN STATS
+========================= */
 exports.getAdminStats = async (req, res, next) => {
   try {
+    // Serve cache if valid
+    if (cachedStats && Date.now() - lastFetch < CACHE_TTL) {
+      return res.json(cachedStats);
+    }
+
+    /* ================= USERS ================= */
     const [
-      // ================= USERS =================
       totalUsers,
       activeUsers,
       suspendedUsers,
-      totalAdmins,
-      totalBuyers,
-      totalSellers,
-
-      // ================= SELLERS =================
-      approvedSellers,
-      pendingSellers,
-      suspendedSellers,
-      verifiedSellers,
-      sellersWithProducts,
-      sellersWithoutProducts,
-
-      // ================= ORDERS =================
-      totalOrders,
-      ordersByStatus,
-      disputedOrders,
-
-      // ================= REVENUE =================
-      completedOrders,
-      todayRevenue,
-      monthRevenue,
-
-      // ================= MARKETPLACE =================
-      totalProducts,
-      activeProducts,
-      inactiveProducts,
-      productViews,
-      buyerVisits,
-
-      // ================= SYSTEM =================
-      auditLogs,
-      pendingPayments,
-      failedPayments,
-      unreadNotifications,
+      adminCount,
+      buyerCount,
+      sellerCount,
     ] = await Promise.all([
-      // USERS
       prisma.users.count(),
       prisma.users.count({ where: { is_active: true } }),
       prisma.users.count({ where: { is_active: false } }),
       prisma.users.count({ where: { role: "admin" } }),
       prisma.users.count({ where: { role: "buyer" } }),
       prisma.users.count({ where: { role: "seller" } }),
+    ]);
 
-      // SELLERS
+    /* ================= SELLERS ================= */
+    const [
+      approvedSellers,
+      pendingSellers,
+      suspendedSellers,
+      verifiedSellers,
+      sellersWithProducts,
+      sellersWithoutProducts,
+    ] = await Promise.all([
       prisma.users.count({
         where: { role: "seller", isApprovedSeller: true },
       }),
@@ -452,82 +444,154 @@ exports.getAdminStats = async (req, res, next) => {
         where: { role: "seller", isApprovedSeller: false },
       }),
       prisma.users.count({
-        where: { role: "seller", isApprovedSeller: true, is_active: false },
-      }),
-      prisma.seller_profiles.count({
-        where: { is_verified: true },
-      }),
-      prisma.products.groupBy({
-        by: ["seller_id"],
-      }).then(r => r.length),
-      prisma.users.count({
         where: {
           role: "seller",
-          products: { none: {} },
+          isApprovedSeller: true,
+          is_active: false,
         },
       }),
+      prisma.seller_profiles.count({ where: { is_verified: true } }),
+      prisma.products
+        .groupBy({ by: ["seller_id"] })
+        .then((r) => r.length),
+      prisma.users.count({
+        where: { role: "seller", products: { none: {} } },
+      }),
+    ]);
 
-      // ORDERS
+    /* ================= ORDERS ================= */
+    const [
+      totalOrders,
+      ordersByStatus,
+      disputedOrdersCount,
+    ] = await Promise.all([
       prisma.orders.count(),
       prisma.orders.groupBy({
         by: ["status"],
         _count: true,
       }),
-      prisma.orders.count({
-        where: { status: "disputed" },
-      }),
+      prisma.orders.count({ where: { status: "disputed" } }),
+    ]);
 
-      // REVENUE
-      prisma.orders.aggregate({
-        where: { status: "completed" },
-        _sum: { total: true },
-      }),
-      prisma.orders.aggregate({
-        where: {
-          status: "completed",
-          created_at: {
-            gte: new Date(new Date().setHours(0, 0, 0, 0)),
-          },
-        },
-        _sum: { total: true },
-      }),
-      prisma.orders.aggregate({
-        where: {
-          status: "completed",
-          created_at: {
-            gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
-          },
-        },
-        _sum: { total: true },
-      }),
+    /* ================= REVENUE ================= */
+    const completedOrders = await prisma.orders.aggregate({
+      where: { status: "completed" },
+      _sum: { total: true },
+    });
 
-      // MARKETPLACE
+    const todayRevenue = await prisma.orders.aggregate({
+      where: {
+        status: "completed",
+        created_at: {
+          gte: new Date(new Date().setHours(0, 0, 0, 0)),
+        },
+      },
+      _sum: { total: true },
+    });
+
+    const monthRevenue = await prisma.orders.aggregate({
+      where: {
+        status: "completed",
+        created_at: {
+          gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+        },
+      },
+      _sum: { total: true },
+    });
+
+    // GMV BY MONTH
+    const rawMonthly = await prisma.orders.groupBy({
+      by: ["created_at"],
+      where: { status: "completed" },
+      _sum: { total: true },
+    });
+
+    const gmvByMonth = rawMonthly.map((o) => ({
+      month: o.created_at.toISOString().slice(0, 7),
+      total: o._sum.total || 0,
+    }));
+
+    /* ================= MARKETPLACE ================= */
+    const [
+      totalProducts,
+      activeProducts,
+      inactiveProducts,
+      productViews,
+      buyerVisits,
+    ] = await Promise.all([
       prisma.products.count(),
       prisma.products.count({ where: { is_active: true } }),
       prisma.products.count({ where: { is_active: false } }),
       prisma.product_views.count(),
       prisma.buyer_visits.count(),
+    ]);
 
-      // SYSTEM
+    /* ================= SYSTEM ================= */
+    const [
+      auditLogs,
+      pendingPayments,
+      failedPayments,
+      unreadNotifications,
+    ] = await Promise.all([
       prisma.audit_logs.count(),
       prisma.payments.count({ where: { status: "pending" } }),
       prisma.payments.count({ where: { status: "failed" } }),
-      prisma.notifications.count({ where: { is_read: false } }),
+      prisma.notifications.findMany({
+        where: { is_read: false },
+        orderBy: { created_at: "desc" },
+        take: 10,
+      }),
     ]);
 
-    res.json({
+    /* ================= SELLER RISK ================= */
+    const sellers = await prisma.users.findMany({
+      where: { role: "seller" },
+      select: {
+        id: true,
+        name: true,
+        products: { select: { id: true } },
+        orders: {
+          where: { status: "disputed" },
+          select: { id: true },
+        },
+      },
+    });
+
+    const risk = sellers.map((s) => ({
+      seller_id: s.id,
+      name: s.name,
+      disputes: s.orders.length,
+      products: s.products.length,
+      risk_score:
+        s.orders.length * 3 + (s.products.length === 0 ? 5 : 0),
+    }));
+
+    /* ================= TOP SELLERS / PRODUCTS ================= */
+    const topSellers = await prisma.orders.groupBy({
+      by: ["buyer_id"],
+      _sum: { total: true },
+      orderBy: { _sum: { total: "desc" } },
+      take: 5,
+    });
+
+    const topProducts = await prisma.products.findMany({
+      orderBy: { views: "desc" },
+      take: 5,
+    });
+
+    const response = {
       success: true,
       stats: {
         users: {
           total: totalUsers,
           active: activeUsers,
           suspended: suspendedUsers,
-          admins: totalAdmins,
-          buyers: totalBuyers,
-          sellers: totalSellers,
+          admins: adminCount,
+          buyers: buyerCount,
+          sellers: sellerCount,
         },
         sellers: {
-          total: totalSellers,
+          total: sellerCount,
           approved: approvedSellers,
           pending: pendingSellers,
           suspended: suspendedSellers,
@@ -538,12 +602,13 @@ exports.getAdminStats = async (req, res, next) => {
         orders: {
           total: totalOrders,
           by_status: ordersByStatus,
-          disputed: disputedOrders,
+          disputed: disputedOrdersCount,
         },
         revenue: {
           total: completedOrders._sum.total || 0,
           today: todayRevenue._sum.total || 0,
           this_month: monthRevenue._sum.total || 0,
+          by_month: gmvByMonth,
         },
         marketplace: {
           products: {
@@ -558,10 +623,18 @@ exports.getAdminStats = async (req, res, next) => {
           audit_logs: auditLogs,
           pending_payments: pendingPayments,
           failed_payments: failedPayments,
-          unread_notifications: unreadNotifications,
+          notifications: unreadNotifications,
         },
+        risk,
+        top_sellers: topSellers,
+        top_products: topProducts,
       },
-    });
+    };
+
+    cachedStats = response;
+    lastFetch = Date.now();
+
+    res.json(response);
   } catch (err) {
     next(err);
   }
@@ -647,6 +720,20 @@ exports.getDisputedOrders = async (req, res, next) => {
   }
 };
 
+exports.closeDispute = async (req, res, next) => {
+  try {
+    const { orderId } = req.params;
+
+    await prisma.orders.update({
+      where: { id: orderId },
+      data: { status: "completed" },
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+};
 /**
  * ADMIN: Sellers list + profiles
  */
