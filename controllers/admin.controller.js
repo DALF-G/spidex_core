@@ -169,6 +169,12 @@ exports.approveSeller = async (req, res, next) => {
 
     const seller = await prisma.users.findUnique({
       where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        role: true,
+        isApprovedSeller: true,
+      },
     });
 
     if (!seller || seller.role !== "seller") {
@@ -189,7 +195,10 @@ exports.approveSeller = async (req, res, next) => {
         id: uuidv4(),
         actor_id: req.user.id,
         action: "SELLER_APPROVED",
-        metadata: { seller_id: userId },
+        metadata: {
+          seller_id: seller.id,
+          seller_name: seller.name,
+        },
       },
     });
 
@@ -204,6 +213,7 @@ exports.approveSeller = async (req, res, next) => {
     next(err);
   }
 };
+
 
 /**
  * ADMIN: Pending sellers
@@ -244,6 +254,7 @@ exports.rejectSeller = async (req, res, next) => {
       select: {
         id: true,
         role: true,
+        name: true,
         isApprovedSeller: true,
         is_active: true,
       },
@@ -343,6 +354,7 @@ exports.deleteUser = async (req, res, next) => {
 
     const user = await prisma.users.findUnique({
       where: { id: userId },
+      select: { id: true, name: true, role: true },
     });
 
     if (!user) return res.status(404).json({ message: "User not found" });
@@ -367,7 +379,11 @@ exports.deleteUser = async (req, res, next) => {
         id: uuidv4(),
         actor_id: req.user.id,
         action: "USER_PERMANENTLY_DELETED",
-        metadata: { deleted_user_id: userId, role: user.role },
+        metadata: {
+          deleted_user_id: user.id,
+          deleted_user_name: user.name,
+          role: user.role,
+        },
       },
     });
 
@@ -376,6 +392,7 @@ exports.deleteUser = async (req, res, next) => {
     next(err);
   }
 };
+
 
 /**
  * ADMIN: Audit logs
