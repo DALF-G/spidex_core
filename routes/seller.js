@@ -10,60 +10,39 @@ const uploadKra = require("../middlewares/uploadKra.middleware");
 /**
  * User Account Profile
  */
-router.get(
-  "/profile",
-  protect,
-  allowRoles("seller"),
+router.get("/profile",protect,allowRoles("seller"),
   sellerController.getProfile
 );
 
-router.put(
-  "/profile",
-  protect,
-  allowRoles("seller"),
+router.put("/profile/update",protect,allowRoles("seller"),
   sellerController.updateProfile
 );
 
 /**
  * Company Profile
  */
-router.get(
-  "/company-profile",
-  protect,
-  allowRoles("seller"),
+router.get("/seller-profile",protect,allowRoles("seller"),
   sellerController.getSellerProfile
 );
 
-router.post(
-  "/company-profile",
-  protect,
-  allowRoles("seller"),
+router.post("/company-profile",protect,allowRoles("seller"),
   sellerController.upsertSellerProfile
 );
 
 /**
  * Orders
  */
-router.get(
-  "/orders",
-  protect,
-  allowRoles("seller"),
+router.get("/orders",protect,allowRoles("seller"),
   sellerApproved,
   sellerController.getOrders
 );
 
-router.put(
-  "/orders/status/:id",
-  protect,
-  allowRoles("seller"),
+router.put("/orders/status/:id",protect,allowRoles("seller"),
   sellerApproved,
   sellerController.updateOrderStatus
 );
 
-router.put(
-  "/orders/fulfill/:id",
-  protect,
-  allowRoles("seller"),
+router.put("/orders/fulfill/:id",protect,allowRoles("seller"),
   sellerApproved,
   sellerController.fulfillOrder
 );
@@ -71,20 +50,14 @@ router.put(
 /**
  * Seller Status
  */
-router.get(
-  "/status",
-  protect,
-  allowRoles("seller"),
+router.get("/status",protect,allowRoles("seller"),
   sellerController.checkApprovalStatus
 );
 
 /**
  * KRA Upload
  */
-router.post(
-  "/company-profile/kra-upload",
-  protect,
-  allowRoles("seller"),
+router.post("/kra-upload",protect,allowRoles("seller"),
   uploadKra.single("kra_certificate"),
   sellerController.uploadKraCertificate
 );
@@ -92,10 +65,7 @@ router.post(
 /**
  * Dashboard
  */
-router.get(
-  "/dashboard/charts",
-  protect,
-  allowRoles("seller"),
+router.get("/dashboard/charts",protect,allowRoles("seller"),
   sellerApproved,
   sellerController.getSellerDashboardCharts
 );

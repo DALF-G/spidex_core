@@ -523,3 +523,91 @@ exports.verifySeller = async (req, res, next) => {
     next(err);
   }
 };
+
+exports.getAllBuyers = async (req, res, next) => {
+  try {
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+    const skip = (page - 1) * limit;
+
+    const [buyers, total] = await Promise.all([
+      prisma.users.findMany({
+        where: { role: "buyer" },
+        skip,
+        take: limit,
+        orderBy: { created_at: "desc" },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          is_active: true,
+          created_at: true,
+        },
+      }),
+      prisma.users.count({ where: { role: "buyer" } }),
+    ]);
+
+    res.json({
+      success: true,
+      page,
+      limit,
+      total,
+      buyers,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.verifySeller = async (req, res, next) => {
+  try {
+    const { sellerId } = req.params;
+
+    const seller = await prisma.users.findUnique({
+      where: { id: sellerId },
+      select: { id: true, role: true },
+    });
+
+    if (!seller || seller.role !== "seller") {
+      return res.status(404).json({ message: "Seller not found" });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.seller_profiles.update({
+        where: { user_id: sellerId },
+        data: { is_verified: true },
+      });
+
+      await tx.users.update({
+        where: { id: sellerId },
+        data: {
+          isApprovedSeller: true,
+          is_active: true,
+        },
+      });
+    });
+
+    await prisma.audit_logs.create({
+      data: {
+        id: uuidv4(),
+        actor_id: req.user.id,
+        action: "SELLER_VERIFIED",
+        metadata: { seller_id: sellerId },
+      },
+    });
+
+    await notifyUser({
+      userId: sellerId,
+      title: "Seller Verified ✅",
+      message: "Your seller account has been verified and approved.",
+    });
+
+    res.json({
+      success: true,
+      message: "Seller verified and approved successfully",
+    });
+  } catch (err) {
+    next(err);
+  }
+};
