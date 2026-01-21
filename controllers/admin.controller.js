@@ -411,38 +411,43 @@ exports.deleteUser = async (req, res, next) => {
       });
     }
 
-    /*
-      🔥 IMPORTANT:
-      If user has relations (orders, products, logs),
-      delete them FIRST to avoid FK constraint errors
-    */
+    // ❌ Never delete admins (optional but recommended)
+    if (user.role === "admin") {
+      return res.status(403).json({
+        message: "Admins cannot be deleted",
+      });
+    }
 
-    // Example (adjust based on schema)
-    await prisma.audit_logs.deleteMany({
-      where: { actor_id: userId },
+    /* =====================================================
+       🔥 HARD DELETE — TRANSACTION SAFE
+    ===================================================== */
+    await prisma.$transaction(async (tx) => {
+      // 1️⃣ Delete refresh tokens (AUTH dependency)
+      await tx.refresh_tokens.deleteMany({
+        where: { user_id: userId },
+      });
+
+      // 2️⃣ Delete buyer orders
+      await tx.orders.deleteMany({
+        where: { buyer_id: userId },
+      });
+
+      // 3️⃣ Delete seller products
+      await tx.products.deleteMany({
+        where: { seller_id: userId },
+      });
+
+      // 4️⃣ 🔥 Hard delete user
+      await tx.users.delete({
+        where: { id: userId },
+      });
     });
 
-    // Delete buyer orders
-    await prisma.orders.deleteMany({
-  where: { buyer_id: userId },
-   });
-
-    // Delete seller products (if applicable)
-   await prisma.products?.deleteMany({
-    where: { seller_id: userId },
-   });
-
-   // 🔥 Hard delete user
-   await prisma.users.delete({
-    where: { id: userId },
-  });
-
-
-    // 🧾 Log deletion action (admin action log)
+    // 🧾 Audit log (NEVER deleted)
     await prisma.audit_logs.create({
       data: {
         id: uuidv4(),
-        actor_id: req.user.id,
+        actor_id: req.user.id, // admin
         action: "USER_PERMANENTLY_DELETED",
         metadata: {
           deleted_user_id: userId,
@@ -459,6 +464,7 @@ exports.deleteUser = async (req, res, next) => {
     next(err);
   }
 };
+
 
 
 /**
