@@ -538,34 +538,45 @@ exports.getAdminStats = async (req, res, next) => {
     ]);
 
     /* ================= ADMIN ACTIVITY ================= */
-const adminActivity = await prisma.audit_logs.findMany({
-  where: {
-    actor_id: { not: null },
-  },
-  orderBy: { created_at: "desc" },
-  take: 10,
-  include: {
-    users: {
+    const rawActivity = await prisma.audit_logs.findMany({
+      where: { actor_id: { not: null } },
+      orderBy: { created_at: "desc" },
+      take: 10,
+    });
+    
+    /* Get unique actor IDs */
+    const actorIds = [
+      ...new Set(rawActivity.map((l) => l.actor_id).filter(Boolean)),
+    ];
+    
+    /* Fetch admins only */
+    const admins = await prisma.users.findMany({
+      where: {
+        id: { in: actorIds },
+        role: "admin",
+      },
       select: {
         id: true,
         name: true,
-        role: true,
       },
-    },
-  },
-});
-
-const formattedAdminActivity = adminActivity
-  .filter((log) => log.users?.role === "admin")
-  .map((log) => ({
-    id: log.id,
-    action: log.action,
-    actor: log.users?.name || "Admin",
-    metadata: log.metadata || {},
-    created_at: log.created_at,
-  }));
-
-
+    });
+    
+    /* Map admin id → name */
+    const adminMap = Object.fromEntries(
+      admins.map((a) => [a.id, a.name])
+    );
+    
+    /* Human-readable admin activity */
+    const adminActivity = rawActivity
+      .filter((log) => adminMap[log.actor_id])
+      .map((log) => ({
+        id: log.id,
+        actor: adminMap[log.actor_id],
+        action: log.action,
+        metadata: log.metadata || {},
+        created_at: log.created_at,
+      }));
+    
     /* ================= SELLER RISK ================= */
     const sellers = await prisma.users.findMany({
       where: { role: "seller" },
@@ -647,7 +658,7 @@ const formattedAdminActivity = adminActivity
           pending_payments: pendingPayments,
           failed_payments: failedPayments,
           notifications: unreadNotifications,
-          admin_activity: formattedAdminActivity,
+          admin_activity: adminActivity,
         },
         
         risk,
