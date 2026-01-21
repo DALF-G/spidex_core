@@ -391,12 +391,6 @@ exports.getAuditLogs = async (req, res, next) => {
   }
 };
 
-/**
- * ADMIN: Dashboard stats
- */
-/* =========================
-   SIMPLE IN-MEMORY CACHE
-========================= */
 let cachedStats = null;
 let lastFetch = 0;
 const CACHE_TTL = 30 * 1000; // 30 seconds
@@ -543,6 +537,35 @@ exports.getAdminStats = async (req, res, next) => {
       }),
     ]);
 
+    /* ================= ADMIN ACTIVITY ================= */
+const adminActivity = await prisma.audit_logs.findMany({
+  where: {
+    actor_id: { not: null },
+  },
+  orderBy: { created_at: "desc" },
+  take: 10,
+  include: {
+    users: {
+      select: {
+        id: true,
+        name: true,
+        role: true,
+      },
+    },
+  },
+});
+
+const formattedAdminActivity = adminActivity
+  .filter((log) => log.users?.role === "admin")
+  .map((log) => ({
+    id: log.id,
+    action: log.action,
+    actor: log.users?.name || "Admin",
+    metadata: log.metadata || {},
+    created_at: log.created_at,
+  }));
+
+
     /* ================= SELLER RISK ================= */
     const sellers = await prisma.users.findMany({
       where: { role: "seller" },
@@ -620,11 +643,13 @@ exports.getAdminStats = async (req, res, next) => {
           buyer_visits: buyerVisits,
         },
         system: {
-          audit_logs: auditLogs,
+          audit_logs_count: auditLogs,
           pending_payments: pendingPayments,
           failed_payments: failedPayments,
           notifications: unreadNotifications,
+          admin_activity: formattedAdminActivity,
         },
+        
         risk,
         top_sellers: topSellers,
         top_products: topProducts,
