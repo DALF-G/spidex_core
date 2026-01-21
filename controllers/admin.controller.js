@@ -400,7 +400,6 @@ const CACHE_TTL = 30 * 1000; // 30 seconds
 ========================= */
 exports.getAdminStats = async (req, res, next) => {
   try {
-    // Serve cache if valid
     if (cachedStats && Date.now() - lastFetch < CACHE_TTL) {
       return res.json(cachedStats);
     }
@@ -445,9 +444,7 @@ exports.getAdminStats = async (req, res, next) => {
         },
       }),
       prisma.seller_profiles.count({ where: { is_verified: true } }),
-      prisma.products
-        .groupBy({ by: ["seller_id"] })
-        .then((r) => r.length),
+      prisma.products.groupBy({ by: ["seller_id"] }).then((r) => r.length),
       prisma.users.count({
         where: { role: "seller", products: { none: {} } },
       }),
@@ -493,7 +490,6 @@ exports.getAdminStats = async (req, res, next) => {
       _sum: { total: true },
     });
 
-    // GMV BY MONTH
     const rawMonthly = await prisma.orders.groupBy({
       by: ["created_at"],
       where: { status: "completed" },
@@ -520,22 +516,21 @@ exports.getAdminStats = async (req, res, next) => {
       prisma.buyer_visits.count(),
     ]);
 
-    /* ================= SYSTEM ================= */
-    const [
-      auditLogs,
-      pendingPayments,
-      failedPayments,
-      unreadNotifications,
-    ] = await Promise.all([
-      prisma.audit_logs.count(),
-      prisma.payments.count({ where: { status: "pending" } }),
-      prisma.payments.count({ where: { status: "failed" } }),
-      prisma.notifications.findMany({
-        where: { is_read: false },
-        orderBy: { created_at: "desc" },
-        take: 10,
-      }),
-    ]);
+    /* ================= NOTIFICATIONS ================= */
+    const unreadNotifications = await prisma.notifications.findMany({
+      where: { is_read: false },
+      orderBy: { created_at: "desc" },
+      take: 10,
+      include: {
+        users: {
+          select: {
+            id: true,
+            name: true,
+            role: true,
+          },
+        },
+      },
+    });
 
     /* ================= ADMIN ACTIVITY ================= */
     const rawActivity = await prisma.audit_logs.findMany({
@@ -543,40 +538,56 @@ exports.getAdminStats = async (req, res, next) => {
       orderBy: { created_at: "desc" },
       take: 10,
     });
-    
-    /* Get unique actor IDs */
-    const actorIds = [
-      ...new Set(rawActivity.map((l) => l.actor_id).filter(Boolean)),
-    ];
-    
-    /* Fetch admins only */
+
+    const actorIds = [...new Set(rawActivity.map((l) => l.actor_id))];
+
     const admins = await prisma.users.findMany({
-      where: {
-        id: { in: actorIds },
-        role: "admin",
-      },
-      select: {
-        id: true,
-        name: true,
-      },
+      where: { id: { in: actorIds }, role: "admin" },
+      select: { id: true, name: true },
     });
-    
-    /* Map admin id → name */
+
     const adminMap = Object.fromEntries(
       admins.map((a) => [a.id, a.name])
     );
-    
-    /* Human-readable admin activity */
+
+    const referencedUserIds = new Set();
+    rawActivity.forEach((log) => {
+      if (log.metadata?.seller_id) referencedUserIds.add(log.metadata.seller_id);
+      if (log.metadata?.user_id) referencedUserIds.add(log.metadata.user_id);
+      if (log.metadata?.deleted_user_id)
+        referencedUserIds.add(log.metadata.deleted_user_id);
+    });
+
+    const referencedUsers = await prisma.users.findMany({
+      where: { id: { in: [...referencedUserIds] } },
+      select: { id: true, name: true },
+    });
+
+    const userMap = Object.fromEntries(
+      referencedUsers.map((u) => [u.id, u.name])
+    );
+
     const adminActivity = rawActivity
       .filter((log) => adminMap[log.actor_id])
       .map((log) => ({
         id: log.id,
         actor: adminMap[log.actor_id],
         action: log.action,
-        metadata: log.metadata || {},
+        metadata: {
+          seller_name: log.metadata?.seller_id
+            ? userMap[log.metadata.seller_id] || "Unknown Seller"
+            : null,
+          user_name: log.metadata?.user_id
+            ? userMap[log.metadata.user_id] || "Unknown User"
+            : null,
+          deleted_user_name: log.metadata?.deleted_user_id
+            ? userMap[log.metadata.deleted_user_id] || "Unknown User"
+            : null,
+          reason: log.metadata?.reason || null,
+        },
         created_at: log.created_at,
       }));
-    
+
     /* ================= SELLER RISK ================= */
     const sellers = await prisma.users.findMany({
       where: { role: "seller" },
@@ -600,17 +611,71 @@ exports.getAdminStats = async (req, res, next) => {
         s.orders.length * 3 + (s.products.length === 0 ? 5 : 0),
     }));
 
-    /* ================= TOP SELLERS / PRODUCTS ================= */
-    const topSellers = await prisma.orders.groupBy({
-      by: ["buyer_id"],
-      _sum: { total: true },
-      orderBy: { _sum: { total: "desc" } },
-      take: 5,
+    /* ================= TOP SELLERS (SCHEMA CORRECT) ================= */
+    const productSales = await prisma.order_items.groupBy({
+      by: ["product_id"],
+      _sum: {
+        price: true,
+      },
+      orderBy: {
+        _sum: {
+          price: "desc",
+        },
+      },
+      take: 20,
     });
 
+    const productIds = productSales.map((p) => p.product_id);
+
+    const productsWithSellers = await prisma.products.findMany({
+      where: { id: { in: productIds } },
+      select: {
+        id: true,
+        seller_id: true,
+      },
+    });
+
+    const sellerTotals = {};
+    productSales.forEach((p) => {
+      const product = productsWithSellers.find(
+        (prod) => prod.id === p.product_id
+      );
+      if (!product?.seller_id) return;
+
+      sellerTotals[product.seller_id] =
+        (sellerTotals[product.seller_id] || 0) +
+        Number(p._sum.price || 0);
+    });
+
+    const sellerIds = Object.keys(sellerTotals);
+
+    const sellerNames = await prisma.users.findMany({
+      where: { id: { in: sellerIds } },
+      select: { id: true, name: true },
+    });
+
+    const sellerNameMap = Object.fromEntries(
+      sellerNames.map((s) => [s.id, s.name])
+    );
+
+    const topSellers = sellerIds
+      .map((id) => ({
+        seller_id: id,
+        seller_name: sellerNameMap[id] || "Unknown Seller",
+        total: sellerTotals[id],
+      }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5);
+
+    /* ================= TOP PRODUCTS ================= */
     const topProducts = await prisma.products.findMany({
       orderBy: { views: "desc" },
       take: 5,
+      include: {
+        users: {
+          select: { id: true, name: true },
+        },
+      },
     });
 
     const response = {
@@ -654,13 +719,12 @@ exports.getAdminStats = async (req, res, next) => {
           buyer_visits: buyerVisits,
         },
         system: {
-          audit_logs_count: auditLogs,
-          pending_payments: pendingPayments,
-          failed_payments: failedPayments,
+          audit_logs_count: rawActivity.length,
+          pending_payments: 0,
+          failed_payments: 0,
           notifications: unreadNotifications,
           admin_activity: adminActivity,
         },
-        
         risk,
         top_sellers: topSellers,
         top_products: topProducts,
@@ -675,6 +739,8 @@ exports.getAdminStats = async (req, res, next) => {
     next(err);
   }
 };
+
+
 
 
 /**
