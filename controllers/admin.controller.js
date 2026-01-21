@@ -270,6 +270,7 @@ exports.rejectSeller = async (req, res, next) => {
         action: "SELLER_REJECTED",
         metadata: {
           seller_id: userId,
+          seller_name: seller.name ,
           reason: reason || null,
         },
       },
@@ -381,15 +382,92 @@ exports.deleteUser = async (req, res, next) => {
  */
 exports.getAuditLogs = async (req, res, next) => {
   try {
-    const logs = await prisma.audit_logs.findMany({
-      orderBy: { created_at: "desc" },
+    const page = Number(req.query.page || 1);
+    const limit = Number(req.query.limit || 20);
+    const skip = (page - 1) * limit;
+
+    /* ================= FETCH RAW LOGS ================= */
+    const [rawLogs, total] = await Promise.all([
+      prisma.audit_logs.findMany({
+        orderBy: { created_at: "desc" },
+        skip,
+        take: limit,
+      }),
+      prisma.audit_logs.count(),
+    ]);
+
+    /* ================= RESOLVE ACTORS ================= */
+    const actorIds = [
+      ...new Set(rawLogs.map((l) => l.actor_id).filter(Boolean)),
+    ];
+
+    const admins = await prisma.users.findMany({
+      where: { id: { in: actorIds } },
+      select: { id: true, name: true, email: true },
     });
 
-    res.json({ success: true, logs });
+    const adminMap = Object.fromEntries(
+      admins.map((a) => [a.id, a])
+    );
+
+    /* ================= BUILD RESPONSE ================= */
+    const logs = rawLogs.map((log) => {
+      const meta = log.metadata || {};
+
+      const actor = adminMap[log.actor_id]
+        ? {
+            id: log.actor_id,
+            name: adminMap[log.actor_id].name,
+            email: adminMap[log.actor_id].email,
+          }
+        : null;
+
+      const target =
+        meta.seller_name ||
+        meta.user_name ||
+        meta.deleted_user_name ||
+        meta.product_title ||
+        null;
+
+      return {
+        id: log.id,
+
+        // 👤 ACTOR (admin)
+        actor,
+
+        // 🔧 ACTION
+        action: log.action,
+
+        // 🎯 TARGET (human-readable)
+        target,
+
+        // ⚠️ EXTRA INFO
+        ip: meta.ip || null,
+        device: meta.device || null,
+
+        // 🧾 RAW METADATA (still available)
+        metadata: meta,
+
+        // 🕒 TIME
+        created_at: log.created_at,
+      };
+    });
+
+    res.json({
+      success: true,
+      pagination: {
+        page,
+        limit,
+        total,
+        total_pages: Math.ceil(total / limit),
+      },
+      logs,
+    });
   } catch (err) {
     next(err);
   }
 };
+
 
 let cachedStats = null;
 let lastFetch = 0;
