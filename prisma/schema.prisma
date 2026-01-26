@@ -231,6 +231,9 @@ model seller_profiles {
   phone_primary    String
   phone_secondary  String?
 
+  website     String?
+  description String?
+
   kra_certificate String?
   is_verified     Boolean @default(false)
 
