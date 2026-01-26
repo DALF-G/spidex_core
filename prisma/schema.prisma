@@ -88,12 +88,30 @@ model order_items {
 }
 
 model audit_logs {
-  id         String    @id @db.Uuid
+  id         String    @id @default(uuid()) @db.Uuid
+
   actor_id   String?   @db.Uuid
+  actor_name String?
+  actor_email String?
+
   action     String?
+  target     String?
+
+  ip         String?
+  device     String?
+  country    String?
+  city       String?
+
   metadata   Json?
   created_at DateTime? @default(now()) @db.Timestamp(6)
+
+  users users? @relation(fields: [actor_id], references: [id])
+
+  @@index([action])
+  @@index([actor_id])
+  @@index([created_at])
 }
+
 
 model refresh_tokens {
   id         String    @id @db.Uuid

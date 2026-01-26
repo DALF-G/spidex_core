@@ -7,6 +7,8 @@ const {
   createUserWithAccount,
   findUserByEmail,
 } = require("../services/user.service");
+const { auditLog } = require("../services/audit.service");
+const AUDIT = require("../constants/auditActions");
 
 /**
  * REGISTER ADMIN
@@ -348,6 +350,7 @@ exports.deleteUser = async (req, res, next) => {
   try {
     const { userId } = req.params;
 
+    // Prevent self-delete
     if (req.user.id === userId) {
       return res.status(400).json({ message: "You cannot delete yourself" });
     }
@@ -357,41 +360,63 @@ exports.deleteUser = async (req, res, next) => {
       select: { id: true, name: true, role: true },
     });
 
-    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
     if (user.role === "admin") {
       return res.status(403).json({ message: "Admins cannot be deleted" });
     }
 
+    // 🔒 Atomic delete
     await prisma.$transaction(async (tx) => {
-      await tx.refresh_tokens.deleteMany({ where: { user_id: userId } });
-      await tx.notifications.deleteMany({ where: { user_id: userId } });
+      await tx.refresh_tokens.deleteMany({
+        where: { user_id: userId },
+      });
+
+      await tx.notifications.deleteMany({
+        where: { user_id: userId },
+      });
+
       await tx.entries.deleteMany({
         where: { accounts: { owner_id: userId } },
       });
+
       await tx.accounts.deleteMany({
         where: { owner_id: userId, owner_type: "user" },
       });
-      await tx.users.delete({ where: { id: userId } });
+
+      await tx.users.delete({
+        where: { id: userId },
+      });
     });
 
-    await prisma.audit_logs.create({
-      data: {
-        id: uuidv4(),
-        actor_id: req.user.id,
-        action: "USER_PERMANENTLY_DELETED",
-        metadata: {
-          deleted_user_id: user.id,
-          deleted_user_name: user.name,
-          role: user.role,
-        },
+    // 🧾 CENTRALIZED AUDIT LOG
+    await auditLog({
+      req,
+      actor: {
+        id: req.user.id,
+        name: req.user.name,
+        email: req.user.email,
+      },
+      action: AUDIT.USER_PERMANENT_DELETE,
+      target: user.name,
+      metadata: {
+        deleted_user_id: user.id,
+        deleted_user_name: user.name,
+        role: user.role,
       },
     });
 
-    res.json({ success: true, message: "User permanently deleted" });
+    res.json({
+      success: true,
+      message: "User permanently deleted",
+    });
   } catch (err) {
     next(err);
   }
 };
+
 
 
 /**
@@ -1008,7 +1033,7 @@ exports.verifySeller = async (req, res, next) => {
 
     const seller = await prisma.users.findUnique({
       where: { id: sellerId },
-      select: { id: true, role: true },
+      select: { id: true,name: true, role: true },
     });
 
     if (!seller || seller.role !== "seller") {
@@ -1035,7 +1060,7 @@ exports.verifySeller = async (req, res, next) => {
         id: uuidv4(),
         actor_id: req.user.id,
         action: "SELLER_VERIFIED",
-        metadata: { seller_id: sellerId },
+        metadata: { seller_id: sellerId, seller_name: seller.name },
       },
     });
 

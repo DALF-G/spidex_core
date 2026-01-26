@@ -43,6 +43,8 @@ exports.getProfile = async (req, res, next) => {
   }
 };
 
+
+
 /**
  * SELLER: Update user account profile (SAFE)
  */
@@ -74,11 +76,18 @@ exports.getSellerProfile = async (req, res, next) => {
       where: { user_id: req.user.id },
     });
 
-    res.json({ success: true, profile });
+    res.json({
+      success: true,
+      profile,
+      documents: {
+        kra_certificate: profile?.kra_certificate || null,
+      },
+    });
   } catch (err) {
     next(err);
   }
 };
+
 
 /**
  * SELLER: Create / Update company profile

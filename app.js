@@ -11,6 +11,7 @@ const productRoutes = require("./routes/product");
 const messageRoutes = require("./routes/messages");
 const errorMiddleware = require("./middlewares/error.middleware");
 
+
 const app = express(); // ✅ app initialized first
 
 app.use(cors());
@@ -25,6 +26,7 @@ app.use("/uploads", express.static("uploads"));
 // Multer ignores JSON parser automatically
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.set("trust proxy", true);
 
 // ======================
 // ROUTES
