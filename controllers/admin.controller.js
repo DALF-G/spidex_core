@@ -171,12 +171,7 @@ exports.approveSeller = async (req, res, next) => {
 
     const seller = await prisma.users.findUnique({
       where: { id: userId },
-      select: {
-        id: true,
-        name: true,
-        role: true,
-        isApprovedSeller: true,
-      },
+      select: { id: true, name: true, role: true, isApprovedSeller: true },
     });
 
     if (!seller || seller.role !== "seller") {
@@ -192,15 +187,14 @@ exports.approveSeller = async (req, res, next) => {
       data: { isApprovedSeller: true, is_active: true },
     });
 
-    await prisma.audit_logs.create({
-      data: {
-        id: uuidv4(),
-        actor_id: req.user.id,
-        action: "SELLER_APPROVED",
-        metadata: {
-          seller_id: seller.id,
-          seller_name: seller.name,
-        },
+    await auditLog({
+      req,
+      actor: req.user,
+      action: AUDIT.SELLER_APPROVED,
+      target: seller.name,
+      metadata: {
+        seller_id: seller.id,
+        seller_name: seller.name,
       },
     });
 
@@ -217,16 +211,14 @@ exports.approveSeller = async (req, res, next) => {
 };
 
 
+
 /**
  * ADMIN: Pending sellers
  */
 exports.getPendingSellers = async (req, res, next) => {
   try {
     const sellers = await prisma.users.findMany({
-      where: {
-        role: "seller",
-        is_active: false,
-      },
+      where: { role: "seller", is_active: false },
       orderBy: { created_at: "asc" },
       select: {
         id: true,
@@ -253,53 +245,37 @@ exports.rejectSeller = async (req, res, next) => {
 
     const seller = await prisma.users.findUnique({
       where: { id: userId },
-      select: {
-        id: true,
-        role: true,
-        name: true,
-        isApprovedSeller: true,
-        is_active: true,
-      },
+      select: { id: true, role: true, name: true },
     });
 
     if (!seller || seller.role !== "seller") {
       return res.status(404).json({ message: "Seller not found" });
     }
 
-    // ❗ Mark seller as REJECTED (persist state)
     await prisma.users.update({
       where: { id: userId },
-      data: {
-        isApprovedSeller: false,
-        is_active: false,
+      data: { isApprovedSeller: false, is_active: false },
+    });
+
+    await auditLog({
+      req,
+      actor: req.user,
+      action: AUDIT.SELLER_REJECTED,
+      target: seller.name,
+      metadata: {
+        seller_id: userId,
+        seller_name: seller.name,
+        reason: reason || null,
       },
     });
 
-    // 🧾 Audit
-    await prisma.audit_logs.create({
-      data: {
-        id: uuidv4(),
-        actor_id: req.user.id,
-        action: "SELLER_REJECTED",
-        metadata: {
-          seller_id: userId,
-          seller_name: seller.name ,
-          reason: reason || null,
-        },
-      },
-    });
-
-    // 🔔 Notify seller
     await notifyUser({
       userId,
       title: "Seller Application Rejected",
       message: reason || "Your seller application was rejected.",
     });
 
-    res.json({
-      success: true,
-      message: "Seller rejected successfully",
-    });
+    res.json({ success: true, message: "Seller rejected successfully" });
   } catch (err) {
     next(err);
   }
@@ -325,13 +301,14 @@ exports.toggleUserActive = async (req, res, next) => {
       data: { is_active: newStatus },
     });
 
-    await prisma.audit_logs.create({
-      data: {
-        id: uuidv4(),
-        actor_id: req.user.id,
-        action: newStatus ? "USER_ACTIVATED" : "USER_SUSPENDED",
-        metadata: { user_id: userId },
-      },
+    await auditLog({
+      req,
+      actor: req.user,
+      action: newStatus
+        ? AUDIT.USER_ACTIVATED
+        : AUDIT.USER_SUSPENDED,
+      target: user.name,
+      metadata: { user_id: userId },
     });
 
     res.json({
@@ -342,6 +319,7 @@ exports.toggleUserActive = async (req, res, next) => {
     next(err);
   }
 };
+
 
 /**
  * ADMIN: Permanent delete user (transaction safe)
@@ -1033,7 +1011,7 @@ exports.verifySeller = async (req, res, next) => {
 
     const seller = await prisma.users.findUnique({
       where: { id: sellerId },
-      select: { id: true,name: true, role: true },
+      select: { id: true, name: true, role: true },
     });
 
     if (!seller || seller.role !== "seller") {
@@ -1048,19 +1026,18 @@ exports.verifySeller = async (req, res, next) => {
 
       await tx.users.update({
         where: { id: sellerId },
-        data: {
-          isApprovedSeller: true,
-          is_active: true,
-        },
+        data: { isApprovedSeller: true, is_active: true },
       });
     });
 
-    await prisma.audit_logs.create({
-      data: {
-        id: uuidv4(),
-        actor_id: req.user.id,
-        action: "SELLER_VERIFIED",
-        metadata: { seller_id: sellerId, seller_name: seller.name },
+    await auditLog({
+      req,
+      actor: req.user,
+      action: AUDIT.SELLER_VERIFIED,
+      target: seller.name,
+      metadata: {
+        seller_id: sellerId,
+        seller_name: seller.name,
       },
     });
 

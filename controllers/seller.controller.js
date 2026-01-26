@@ -19,6 +19,37 @@ const STATUS_TRANSITIONS = {
 };
 
 /**
+ * ===============================
+ * SAFE AUDIT LOGGER (NEW)
+ * ===============================
+ */
+const safeAuditLog = async ({
+  actorId,
+  action,
+  metadata = {},
+}) => {
+  if (!actorId) return;
+
+  const actor = await prisma.users.findUnique({
+    where: { id: actorId },
+    select: { id: true, name: true, email: true },
+  });
+
+  if (!actor) return;
+
+  await prisma.audit_logs.create({
+    data: {
+      id: uuidv4(),
+      actor_id: actor.id,
+      actor_name: actor.name,
+      actor_email: actor.email,
+      action,
+      metadata,
+    },
+  });
+};
+
+/**
  * SELLER: Get user account profile
  */
 exports.getProfile = async (req, res, next) => {
@@ -42,8 +73,6 @@ exports.getProfile = async (req, res, next) => {
     next(err);
   }
 };
-
-
 
 /**
  * SELLER: Update user account profile (SAFE)
@@ -87,7 +116,6 @@ exports.getSellerProfile = async (req, res, next) => {
     next(err);
   }
 };
-
 
 /**
  * SELLER: Create / Update company profile
@@ -133,13 +161,10 @@ exports.upsertSellerProfile = async (req, res, next) => {
       },
     });
 
-    await prisma.audit_logs.create({
-      data: {
-        id: uuidv4(),
-        actor_id: userId,
-        action: "SELLER_PROFILE_UPDATED",
-        metadata: { seller_id: userId },
-      },
+    await safeAuditLog({
+      actorId: userId,
+      action: "SELLER_PROFILE_UPDATED",
+      metadata: { seller_id: userId },
     });
 
     res.json({ success: true, profile });
@@ -174,7 +199,7 @@ exports.getOrders = async (req, res, next) => {
 };
 
 /**
- * SELLER: Update order status (WITH TRANSITION VALIDATION)
+ * SELLER: Update order status
  */
 exports.updateOrderStatus = async (req, res, next) => {
   try {
@@ -211,13 +236,10 @@ exports.updateOrderStatus = async (req, res, next) => {
       data: { status },
     });
 
-    await prisma.audit_logs.create({
-      data: {
-        id: uuidv4(),
-        actor_id: req.user.id,
-        action: "ORDER_STATUS_UPDATED",
-        metadata: { order_id: id, status },
-      },
+    await safeAuditLog({
+      actorId: req.user.id,
+      action: "ORDER_STATUS_UPDATED",
+      metadata: { order_id: id, status },
     });
 
     res.json({ success: true, order: updatedOrder });
@@ -346,7 +368,7 @@ exports.checkApprovalStatus = async (req, res, next) => {
 };
 
 /**
- * SELLER: Upload KRA certificate (SAFE UPSERT)
+ * SELLER: Upload KRA certificate
  */
 exports.uploadKraCertificate = async (req, res, next) => {
   try {

@@ -1,27 +1,49 @@
 const prisma = require("../config/db");
-const { getRequestMeta } = require("../utils/requestMeta");
+const { v4: uuidv4 } = require("uuid");
 
 /**
- * Central audit logger
- * @param {Object} params
+ * CENTRALIZED AUDIT LOGGER (FK SAFE)
  */
-const auditLog = async ({
-  req,
-  actorId,
-  actorName,
-  actorEmail,
+exports.auditLog = async ({
+  req = null,
+  actor = null,
   action,
-  target,
+  target = null,
   metadata = {},
 }) => {
   try {
-    const { ip, device, location } = getRequestMeta(req);
+    let actorId = null;
+    let actorName = null;
+    let actorEmail = null;
+
+    // 🧠 Resolve actor safely
+    if (actor?.id) {
+      const existingUser = await prisma.users.findUnique({
+        where: { id: actor.id },
+        select: { id: true, name: true, email: true },
+      });
+
+      if (existingUser) {
+        actorId = existingUser.id;
+        actorName = existingUser.name;
+        actorEmail = existingUser.email;
+      }
+    }
+
+    // 🧾 Capture request context if available
+    const ip =
+      req?.headers["x-forwarded-for"]?.split(",")[0] ||
+      req?.socket?.remoteAddress ||
+      null;
+
+    const device = req?.headers["user-agent"] || null;
 
     await prisma.audit_logs.create({
       data: {
-        actor: {
-          connect: { id: actorId },
-        },
+        id: uuidv4(),
+
+        // FK-safe (null allowed)
+        actor_id: actorId,
         actor_name: actorName,
         actor_email: actorEmail,
 
@@ -30,16 +52,12 @@ const auditLog = async ({
 
         ip,
         device,
-        country: location.country,
-        city: location.city,
 
         metadata,
       },
     });
-  } catch (error) {
-    // ❗ Never crash the app because of logs
-    console.error("AUDIT LOG FAILED:", error.message);
+  } catch (err) {
+    // ❗ NEVER crash the app because of audit logging
+    console.error("Audit log failed:", err.message);
   }
 };
-
-module.exports = { auditLog };
