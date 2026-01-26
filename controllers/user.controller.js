@@ -26,7 +26,7 @@ exports.register = async (req, res, next) => {
       });
     }
 
-    const safeEmail = email.trim();
+    const safeEmail = email.trim().toLowerCase();
 
     const existing = await findUserByEmail(safeEmail);
     if (existing) {
@@ -93,7 +93,7 @@ exports.login = async (req, res, next) => {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
-    const safeEmail = email.trim();
+    const safeEmail = email.trim().toLowerCase();
 
     const user = await findUserByEmail(safeEmail);
     if (!user) {
