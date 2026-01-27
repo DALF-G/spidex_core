@@ -10,7 +10,7 @@ const uploadKra = require("../middlewares/uploadKra.middleware");
 /**
  * User Account Profile
  */
-router.get("/profile",protect,allowRoles("seller,admin"),
+router.get("/profile",protect,allowRoles("seller", "admin"),
   sellerController.getProfile
 );
 
@@ -21,7 +21,7 @@ router.put("/profile/update",protect,allowRoles("seller"),
 /**
  * Company Profile
  */
-router.get("/seller-profile",protect,allowRoles("seller,admin"),
+router.get("/seller-profile",protect,allowRoles("seller", "admin"),
   sellerController.getSellerProfile
 );
 
