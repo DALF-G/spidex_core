@@ -76,6 +76,7 @@ exports.createOrder = async (req, res, next) => {
         product_id: product.id,
         quantity: item.quantity,
         price: product.price,
+        subtotal: product.price * item.quantity, 
       });
     }
 
@@ -106,10 +107,15 @@ exports.createOrder = async (req, res, next) => {
 exports.getMyOrders = async (req, res, next) => {
   try {
     const orders = await prisma.orders.findMany({
-      where: { buyer_id: req.user.id },
+      where: {
+        buyer_id: req.user.id,
+        status: { not: "cart" }, // 🔥 hide carts
+      },
       include: {
         order_items: {
-          include: { product: true },
+          include: {
+            products: true, // ✅ MATCH frontend
+          },
         },
       },
       orderBy: { created_at: "desc" },
@@ -121,6 +127,7 @@ exports.getMyOrders = async (req, res, next) => {
   }
 };
 
+
 /**
  * BUYER: View single order
  */
@@ -130,7 +137,9 @@ exports.getOrderById = async (req, res, next) => {
       where: { id: req.params.id },
       include: {
         order_items: {
-          include: { product: true },
+          include: {
+            products: true,
+          },
         },
       },
     });
@@ -144,6 +153,7 @@ exports.getOrderById = async (req, res, next) => {
     next(err);
   }
 };
+
 
 /**
  * BUYER: Raise dispute
