@@ -416,149 +416,149 @@ exports.getSellerDashboardStats = async (req, res, next) => {
   try {
     const sellerId = req.user.id;
 
-    /* =========================
-       PRODUCTS
-    ========================= */
-    const [totalProducts, activeProducts] = await Promise.all([
-      prisma.products.count({
+    const result = await prisma.$transaction(async (tx) => {
+      /* =========================
+         PRODUCTS
+      ========================= */
+      const totalProducts = await tx.products.count({
         where: { seller_id: sellerId },
-      }),
-      prisma.products.count({
+      });
+
+      const activeProducts = await tx.products.count({
         where: { seller_id: sellerId, is_active: true },
-      }),
-    ]);
+      });
 
-    /* =========================
-       ORDERS
-    ========================= */
-    const orders = await prisma.orders.findMany({
-      where: {
-        order_items: {
-          some: {
-            products: { seller_id: sellerId },
+      /* =========================
+         ORDERS
+      ========================= */
+      const orders = await tx.orders.findMany({
+        where: {
+          order_items: {
+            some: {
+              products: { seller_id: sellerId },
+            },
           },
         },
-      },
-      include: {
-        order_items: {
-          include: { products: true },
-        },
-      },
-    });
-
-    const totalOrders = orders.length;
-    const pendingOrders = orders.filter(
-      (o) => o.status === "pending"
-    ).length;
-    const completedOrders = orders.filter(
-      (o) => o.status === "completed"
-    ).length;
-
-    /* =========================
-       REVENUE
-    ========================= */
-    const completedOrdersOnly = orders.filter(
-      (o) => o.status === "completed"
-    );
-
-    const totalRevenue = completedOrdersOnly.reduce(
-      (sum, o) => sum + Number(o.total || 0),
-      0
-    );
-
-    const avgOrderValue =
-      completedOrdersOnly.length > 0
-        ? totalRevenue / completedOrdersOnly.length
-        : 0;
-
-    /* =========================
-       CHARTS
-    ========================= */
-    const ordersByStatus = await prisma.orders.groupBy({
-      by: ["status"],
-      where: {
-        order_items: {
-          some: {
-            products: { seller_id: sellerId },
+        include: {
+          order_items: {
+            include: { products: true },
           },
         },
-      },
-      _count: true,
-    });
+      });
 
-    const monthlySales = await prisma.orders.findMany({
-      where: {
-        status: "completed",
-        order_items: {
-          some: {
-            products: { seller_id: sellerId },
+      const totalOrders = orders.length;
+      const pendingOrders = orders.filter(o => o.status === "pending").length;
+      const completedOrders = orders.filter(o => o.status === "completed");
+
+      /* =========================
+         REVENUE
+      ========================= */
+      const totalRevenue = completedOrders.reduce(
+        (sum, o) => sum + Number(o.total || 0),
+        0
+      );
+
+      const avgOrderValue =
+        completedOrders.length > 0
+          ? totalRevenue / completedOrders.length
+          : 0;
+
+      /* =========================
+         ORDERS BY STATUS (CHART)
+      ========================= */
+      const ordersByStatus = await tx.orders.groupBy({
+        by: ["status"],
+        where: {
+          order_items: {
+            some: {
+              products: { seller_id: sellerId },
+            },
           },
         },
-      },
-      select: {
-        total: true,
-        created_at: true,
-      },
+        _count: true,
+      });
+
+      /* =========================
+         MONTHLY SALES (CHART)
+      ========================= */
+      const monthlySales = await tx.orders.findMany({
+        where: {
+          status: "completed",
+          order_items: {
+            some: {
+              products: { seller_id: sellerId },
+            },
+          },
+        },
+        select: {
+          total: true,
+          created_at: true,
+        },
+      });
+
+      /* =========================
+         WALLET BALANCE
+      ========================= */
+      const sellerAccount = await tx.accounts.findFirst({
+        where: {
+          owner_id: sellerId,
+          owner_type: "user",
+        },
+      });
+
+      const walletBalance = sellerAccount?.balance || 0;
+
+      /* =========================
+         PAYOUT HISTORY
+      ========================= */
+      const payouts = await tx.transactions.findMany({
+        where: {
+          description: "Order completed payout",
+        },
+        orderBy: { created_at: "desc" },
+        take: 5,
+        include: {
+          entries: {
+            where: { account_id: sellerAccount?.id },
+          },
+        },
+      });
+
+      /* =========================
+         RECENT ORDERS
+      ========================= */
+      const recentOrders = orders
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+        .slice(0, 5);
+
+      return {
+        overview: {
+          totalProducts,
+          activeProducts,
+          totalOrders,
+          pendingOrders,
+          completedOrders: completedOrders.length,
+          totalRevenue,
+          avgOrderValue,
+        },
+        charts: {
+          ordersByStatus,
+          monthlySales,
+        },
+        wallet: {
+          balance: walletBalance,
+          payouts,
+        },
+        recent: {
+          orders: recentOrders,
+        },
+      };
     });
 
-    /* =========================
-       TOP PRODUCTS
-    ========================= */
-    const topProducts = await prisma.order_items.groupBy({
-      by: ["product_id"],
-      where: {
-        products: { seller_id: sellerId },
-      },
-      _sum: { quantity: true },
-      orderBy: {
-        _sum: { quantity: "desc" },
-      },
-      take: 5,
-    });
-
-    const productDetails = await prisma.products.findMany({
-      where: {
-        id: { in: topProducts.map((p) => p.product_id) },
-      },
-      select: {
-        id: true,
-        title: true,
-        price: true,
-      },
-    });
-
-    /* =========================
-       RECENT ORDERS
-    ========================= */
-    const recentOrders = orders
-      .sort(
-        (a, b) =>
-          new Date(b.created_at) - new Date(a.created_at)
-      )
-      .slice(0, 5);
-
-    res.json({
-      success: true,
-      overview: {
-        totalProducts,
-        activeProducts,
-        totalOrders,
-        pendingOrders,
-        completedOrders,
-        totalRevenue,
-        avgOrderValue,
-      },
-      charts: {
-        ordersByStatus,
-        monthlySales,
-      },
-      recent: {
-        orders: recentOrders,
-        topProducts: productDetails,
-      },
-    });
+    res.json({ success: true, ...result });
   } catch (err) {
     next(err);
   }
 };
+
 
