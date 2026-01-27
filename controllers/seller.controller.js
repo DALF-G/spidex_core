@@ -412,10 +412,68 @@ exports.uploadKraCertificate = async (req, res, next) => {
 /**
  * SELLER: Dashboard charts
  */
-exports.getSellerDashboardCharts = async (req, res, next) => {
+exports.getSellerDashboardStats = async (req, res, next) => {
   try {
     const sellerId = req.user.id;
 
+    /* =========================
+       PRODUCTS
+    ========================= */
+    const [totalProducts, activeProducts] = await Promise.all([
+      prisma.products.count({
+        where: { seller_id: sellerId },
+      }),
+      prisma.products.count({
+        where: { seller_id: sellerId, is_active: true },
+      }),
+    ]);
+
+    /* =========================
+       ORDERS
+    ========================= */
+    const orders = await prisma.orders.findMany({
+      where: {
+        order_items: {
+          some: {
+            products: { seller_id: sellerId },
+          },
+        },
+      },
+      include: {
+        order_items: {
+          include: { products: true },
+        },
+      },
+    });
+
+    const totalOrders = orders.length;
+    const pendingOrders = orders.filter(
+      (o) => o.status === "pending"
+    ).length;
+    const completedOrders = orders.filter(
+      (o) => o.status === "completed"
+    ).length;
+
+    /* =========================
+       REVENUE
+    ========================= */
+    const completedOrdersOnly = orders.filter(
+      (o) => o.status === "completed"
+    );
+
+    const totalRevenue = completedOrdersOnly.reduce(
+      (sum, o) => sum + Number(o.total || 0),
+      0
+    );
+
+    const avgOrderValue =
+      completedOrdersOnly.length > 0
+        ? totalRevenue / completedOrdersOnly.length
+        : 0;
+
+    /* =========================
+       CHARTS
+    ========================= */
     const ordersByStatus = await prisma.orders.groupBy({
       by: ["status"],
       where: {
@@ -443,14 +501,64 @@ exports.getSellerDashboardCharts = async (req, res, next) => {
       },
     });
 
+    /* =========================
+       TOP PRODUCTS
+    ========================= */
+    const topProducts = await prisma.order_items.groupBy({
+      by: ["product_id"],
+      where: {
+        products: { seller_id: sellerId },
+      },
+      _sum: { quantity: true },
+      orderBy: {
+        _sum: { quantity: "desc" },
+      },
+      take: 5,
+    });
+
+    const productDetails = await prisma.products.findMany({
+      where: {
+        id: { in: topProducts.map((p) => p.product_id) },
+      },
+      select: {
+        id: true,
+        title: true,
+        price: true,
+      },
+    });
+
+    /* =========================
+       RECENT ORDERS
+    ========================= */
+    const recentOrders = orders
+      .sort(
+        (a, b) =>
+          new Date(b.created_at) - new Date(a.created_at)
+      )
+      .slice(0, 5);
+
     res.json({
       success: true,
+      overview: {
+        totalProducts,
+        activeProducts,
+        totalOrders,
+        pendingOrders,
+        completedOrders,
+        totalRevenue,
+        avgOrderValue,
+      },
       charts: {
         ordersByStatus,
         monthlySales,
+      },
+      recent: {
+        orders: recentOrders,
+        topProducts: productDetails,
       },
     });
   } catch (err) {
     next(err);
   }
 };
+

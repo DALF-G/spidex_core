@@ -11,6 +11,7 @@ const productRoutes = require("./routes/product");
 const messageRoutes = require("./routes/messages");
 const errorMiddleware = require("./middlewares/error.middleware");
 
+const path = require("path");
 
 const app = express(); // ✅ app initialized first
 

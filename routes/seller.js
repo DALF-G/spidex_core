@@ -67,7 +67,7 @@ router.post("/kra-upload",protect,allowRoles("seller"),
  */
 router.get("/stats",protect,allowRoles("seller"),
   sellerApproved,
-  sellerController.getSellerDashboardCharts
+  sellerController.getSellerDashboardStats
 );
 
 module.exports = router;
