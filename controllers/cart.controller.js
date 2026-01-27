@@ -234,3 +234,42 @@ exports.removeCartItem = async (req, res, next) => {
     next(err);
   }
 };
+
+exports.checkoutCart = async (req, res, next) => {
+    try {
+      const buyerId = req.user.id;
+  
+      const cart = await prisma.orders.findFirst({
+        where: {
+          buyer_id: buyerId,
+          status: "cart",
+        },
+        include: {
+          order_items: true,
+        },
+      });
+  
+      if (!cart || cart.order_items.length === 0) {
+        return res.status(400).json({
+          message: "Cart is empty",
+        });
+      }
+  
+      // Finalize order
+      const order = await prisma.orders.update({
+        where: { id: cart.id },
+        data: {
+          status: "pending", // next: paid / shipped / completed
+        },
+      });
+  
+      res.json({
+        success: true,
+        message: "Order placed successfully",
+        order,
+      });
+    } catch (err) {
+      next(err);
+    }
+  };
+  
