@@ -416,43 +416,56 @@ exports.getSellerDashboardStats = async (req, res, next) => {
   try {
     const sellerId = req.user.id;
 
+    /* =========================
+       CHECK SELLER APPROVAL
+       (SOURCE OF TRUTH: users table)
+    ========================= */
+    const seller = await prisma.users.findUnique({
+      where: { id: sellerId },
+      select: { isApprovedSeller: true },
+    });
+
+    if (!seller || seller.isApprovedSeller !== true) {
+      return res.status(403).json({
+        message: "Seller not approved yet",
+      });
+    }
+
+    /* =========================
+       DASHBOARD STATS
+    ========================= */
     const result = await prisma.$transaction(async (tx) => {
-      /* =========================
-         PRODUCTS
-      ========================= */
-      const totalProducts = await tx.products.count({
-        where: { seller_id: sellerId },
-      });
+      /* PRODUCTS */
+      const [totalProducts, activeProducts] = await Promise.all([
+        tx.products.count({ where: { seller_id: sellerId } }),
+        tx.products.count({
+          where: { seller_id: sellerId, is_active: true },
+        }),
+      ]);
 
-      const activeProducts = await tx.products.count({
-        where: { seller_id: sellerId, is_active: true },
-      });
-
-      /* =========================
-         ORDERS
-      ========================= */
+      /* ORDERS */
       const orders = await tx.orders.findMany({
         where: {
           order_items: {
-            some: {
-              products: { seller_id: sellerId },
-            },
+            some: { products: { seller_id: sellerId } },
           },
         },
         include: {
-          order_items: {
-            include: { products: true },
-          },
+          order_items: { include: { products: true } },
         },
+        orderBy: { created_at: "desc" },
       });
 
       const totalOrders = orders.length;
-      const pendingOrders = orders.filter(o => o.status === "pending").length;
-      const completedOrders = orders.filter(o => o.status === "completed");
+      const pendingOrders = orders.filter(
+        (o) => o.status === "pending"
+      ).length;
 
-      /* =========================
-         REVENUE
-      ========================= */
+      const completedOrders = orders.filter(
+        (o) => o.status === "completed"
+      );
+
+      /* REVENUE */
       const totalRevenue = completedOrders.reduce(
         (sum, o) => sum + Number(o.total || 0),
         0
@@ -463,73 +476,51 @@ exports.getSellerDashboardStats = async (req, res, next) => {
           ? totalRevenue / completedOrders.length
           : 0;
 
-      /* =========================
-         ORDERS BY STATUS (CHART)
-      ========================= */
+      /* CHARTS */
       const ordersByStatus = await tx.orders.groupBy({
         by: ["status"],
         where: {
           order_items: {
-            some: {
-              products: { seller_id: sellerId },
-            },
+            some: { products: { seller_id: sellerId } },
           },
         },
         _count: true,
       });
 
-      /* =========================
-         MONTHLY SALES (CHART)
-      ========================= */
       const monthlySales = await tx.orders.findMany({
         where: {
           status: "completed",
           order_items: {
-            some: {
-              products: { seller_id: sellerId },
-            },
+            some: { products: { seller_id: sellerId } },
           },
         },
-        select: {
-          total: true,
-          created_at: true,
-        },
+        select: { total: true, created_at: true },
       });
 
-      /* =========================
-         WALLET BALANCE
-      ========================= */
+      /* WALLET */
       const sellerAccount = await tx.accounts.findFirst({
-        where: {
-          owner_id: sellerId,
-          owner_type: "user",
-        },
+        where: { owner_id: sellerId, owner_type: "user" },
       });
 
       const walletBalance = sellerAccount?.balance || 0;
 
-      /* =========================
-         PAYOUT HISTORY
-      ========================= */
-      const payouts = await tx.transactions.findMany({
-        where: {
-          description: "Order completed payout",
-        },
-        orderBy: { created_at: "desc" },
-        take: 5,
-        include: {
-          entries: {
-            where: { account_id: sellerAccount?.id },
-          },
-        },
-      });
-
-      /* =========================
-         RECENT ORDERS
-      ========================= */
-      const recentOrders = orders
-        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-        .slice(0, 5);
+      const payouts = sellerAccount
+        ? await tx.transactions.findMany({
+            where: {
+              description: "Order completed payout",
+              entries: {
+                some: { account_id: sellerAccount.id },
+              },
+            },
+            orderBy: { created_at: "desc" },
+            take: 5,
+            include: {
+              entries: {
+                where: { account_id: sellerAccount.id },
+              },
+            },
+          })
+        : [];
 
       return {
         overview: {
@@ -550,7 +541,7 @@ exports.getSellerDashboardStats = async (req, res, next) => {
           payouts,
         },
         recent: {
-          orders: recentOrders,
+          orders: orders.slice(0, 5),
         },
       };
     });
@@ -560,5 +551,7 @@ exports.getSellerDashboardStats = async (req, res, next) => {
     next(err);
   }
 };
+
+
 
 
