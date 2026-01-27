@@ -128,7 +128,24 @@ exports.getProductById = async (req, res, next) => {
     const product = await prisma.products.findUnique({
       where: { id },
       include: {
-        users: { select: { id: true, name: true, phone: true } },
+        users: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            // ✅ SELLER PROFILE HERE
+            seller_profile: {
+              select: {
+                company_name: true,
+                company_location: true,
+                website: true,
+                phone_primary: true,
+                phone_secondary: true,
+                is_verified: true,
+              },
+            },
+          },
+        },
         category: true,
         subcategory: true,
         productimage: true,
@@ -140,10 +157,12 @@ exports.getProductById = async (req, res, next) => {
     }
 
     // 🔁 Increment product views (non-blocking)
-    prisma.products.update({
-      where: { id },
-      data: { views: { increment: 1 } },
-    }).catch(() => {});
+    prisma.products
+      .update({
+        where: { id },
+        data: { views: { increment: 1 } },
+      })
+      .catch(() => {});
 
     // 👁️ Buyer view tracking
     if (req.user && req.user.role === "buyer") {
@@ -181,6 +200,8 @@ exports.getProductById = async (req, res, next) => {
       success: true,
       product: {
         ...rest,
+        
+        // product.seller.seller_profile.company_name
         seller: users,
       },
     });
@@ -188,6 +209,7 @@ exports.getProductById = async (req, res, next) => {
     next(err);
   }
 };
+
 
 /* ===========================
    GET MY PRODUCTS (SELLER)
