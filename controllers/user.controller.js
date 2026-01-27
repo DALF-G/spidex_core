@@ -40,7 +40,8 @@ exports.register = async (req, res, next) => {
       email: safeEmail,
       phone: phone.trim(),
       password_hash,
-      role,
+      role,    
+      is_active: true,
     });
 
     // Access token (short-lived)
@@ -109,7 +110,7 @@ exports.login = async (req, res, next) => {
     =============================== */
     if (user.is_active === false) {
       return res.status(403).json({
-        message: "Your account is suspended. Please contact the admin.",
+        message: "Your account is suspended or Not Approved Yet. Please contact the admin.",
       });
     }
 

@@ -65,7 +65,7 @@ router.post("/kra-upload",protect,allowRoles("seller"),
 /**
  * Dashboard
  */
-router.get("/dashboard/charts",protect,allowRoles("seller"),
+router.get("/stats",protect,allowRoles("seller"),
   sellerApproved,
   sellerController.getSellerDashboardCharts
 );

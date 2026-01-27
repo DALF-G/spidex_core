@@ -23,7 +23,8 @@ async function createUserWithAccount({
     throw err;
   }
 
-  const safeEmail = email.trim();
+  // ✅ normalize once, consistently
+  const safeEmail = email.trim().toLowerCase();
   const safePhone = phone.trim();
 
   // 🔍 PRE-CHECKS (SAFE)
@@ -49,7 +50,7 @@ async function createUserWithAccount({
     throw err;
   }
 
-  // ✅ TRANSACTION (UNCHANGED LOGIC)
+  // ✅ TRANSACTION (SAFE, ATOMIC)
   return prisma.$transaction(async (tx) => {
     const userId = uuidv4();
 
@@ -61,10 +62,16 @@ async function createUserWithAccount({
         phone: safePhone,
         password_hash,
         role,
-        is_active: role === "seller" ? false : true,
+
+        // ✅ ALL USERS ACTIVE ON CREATE
+        is_active: true,
+
+        // ✅ SELLERS START UNAPPROVED (BUT CAN LOGIN)
+        ...(role === "seller" && { isApprovedSeller: false }),
       },
     });
 
+    // 💰 Ledger account
     await tx.accounts.create({
       data: {
         id: uuidv4(),
@@ -74,12 +81,16 @@ async function createUserWithAccount({
       },
     });
 
+    // 🧾 Audit log (does NOT break anything)
     await tx.audit_logs.create({
       data: {
         id: uuidv4(),
         actor_id: userId,
         action: "USER_CREATED",
-        metadata: { email: safeEmail, role },
+        metadata: {
+          email: safeEmail,
+          role,
+        },
       },
     });
 
@@ -96,7 +107,7 @@ async function findUserByEmail(email) {
   }
 
   return prisma.users.findUnique({
-    where: { email: email.trim() },
+    where: { email: email.trim().toLowerCase() },
   });
 }
 
