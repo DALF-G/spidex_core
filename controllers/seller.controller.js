@@ -376,24 +376,38 @@ exports.uploadKraCertificate = async (req, res, next) => {
       return res.status(400).json({ message: "File required" });
     }
 
-    const profile = await prisma.seller_profiles.upsert({
-      where: { user_id: req.user.id },
-      update: {
+    const userId = req.user.id;
+
+    // 1️⃣ Ensure company profile exists
+    const existingProfile = await prisma.seller_profiles.findUnique({
+      where: { user_id: userId },
+    });
+
+    if (!existingProfile) {
+      return res.status(400).json({
+        success: false,
+        message: "Create company profile before uploading KRA certificate",
+      });
+    }
+
+    // 2️⃣ Update ONLY (no create)
+    const updatedProfile = await prisma.seller_profiles.update({
+      where: { user_id: userId },
+      data: {
         kra_certificate: req.file.path,
-        is_verified: false,
-      },
-      create: {
-        user_id: req.user.id,
-        kra_certificate: req.file.path,
-        is_verified: false,
+        is_verified: false, // reset verification on re-upload
       },
     });
 
-    res.json({ success: true, profile });
+    return res.json({
+      success: true,
+      profile: updatedProfile,
+    });
   } catch (err) {
     next(err);
   }
 };
+
 
 /**
  * SELLER: Dashboard charts
