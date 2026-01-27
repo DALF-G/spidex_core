@@ -68,16 +68,18 @@ model payments {
 }
 
 model orders {
-  id          String        @id @db.Uuid
+  id          String        @id @default(uuid()) @db.Uuid
   buyer_id    String?       @db.Uuid
-  status      String?       @db.VarChar(20)
+  status      String        @default("cart") @db.VarChar(20)
   total       Decimal?      @db.Decimal(14, 2)
-  created_at  DateTime?     @default(now()) @db.Timestamp(6)
+  created_at  DateTime      @default(now()) @db.Timestamp(6)
+
   order_items order_items[]
-  users       users?        @relation(fields: [buyer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users       users?        @relation(fields: [buyer_id], references: [id])
 
   @@index([buyer_id], map: "idx_orders_buyer")
 }
+
 
 model order_items {
   id         String    @id @db.Uuid

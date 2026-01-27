@@ -10,6 +10,7 @@ const categoryRoutes = require("./routes/category");
 const productRoutes = require("./routes/product");
 const messageRoutes = require("./routes/messages");
 const errorMiddleware = require("./middlewares/error.middleware");
+const cartRoutes = require("./routes/cart.routes");
 
 const path = require("path");
 
@@ -41,6 +42,8 @@ app.use("/api/seller", sellerRoutes);
 app.use("/api/buyer", buyerRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/auth", userRoutes);
+app.use("/api/cart", cartRoutes);
+
 
 // ======================
 // HEALTH CHECK
