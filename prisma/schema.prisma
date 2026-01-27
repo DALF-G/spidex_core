@@ -86,10 +86,13 @@ model order_items {
   order_id   String?   @db.Uuid
   product_id String?   @db.Uuid
   quantity   Int?
-  price      Decimal?  @db.Decimal(14, 2)
-  orders     orders?   @relation(fields: [order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  products   products? @relation(fields: [product_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  price      Decimal?  @db.Decimal(14, 2) // unit price
+  subtotal   Decimal?  @db.Decimal(14, 2) // price * quantity
+
+  orders     orders?   @relation(fields: [order_id], references: [id])
+  products   products? @relation(fields: [product_id], references: [id])
 }
+
 
 model audit_logs {
   id String @id @default(uuid()) @db.Uuid

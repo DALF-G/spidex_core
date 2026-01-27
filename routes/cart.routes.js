@@ -4,7 +4,7 @@ const cartController = require("../controllers/cart.controller");
 const { protect } = require("../middlewares/auth.middleware");
 
 router.get("/", protect, cartController.getMyCart);
-router.post("/", protect, cartController.addToCart);
+router.post("/add", protect, cartController.addToCart);
 router.patch("/:itemId", protect, cartController.updateCartItem);
 router.delete("/:itemId", protect, cartController.removeCartItem);
 
