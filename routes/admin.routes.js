@@ -23,6 +23,9 @@ router.delete("/delete/:userId",protect,allowRoles("admin"),
 router.get("/sellers",protect,allowRoles("admin"),
   adminController.getAllSellerProfiles
 );
+router.get("/sellers/search",protect,allowRoles("admin"),
+  adminController.searchSellers
+);
 router.get("/sellers/:sellerId",protect,allowRoles("admin"),
   adminController.getSellerProfileById
 );

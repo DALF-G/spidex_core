@@ -1055,3 +1055,35 @@ exports.verifySeller = async (req, res, next) => {
     next(err);
   }
 };
+
+exports.searchSellers = async (req, res, next) => {
+  try {
+    const { query } = req.query;
+
+    if (!query || !query.trim()) {
+      return res.json({ success: true, sellers: [] });
+    }
+
+    const q = query.trim().toLowerCase();
+
+    const sellers = await prisma.users.findMany({
+      where: {
+        role: "seller",
+        OR: [
+          { email: { contains: q, mode: "insensitive" } },
+          { name: { contains: q, mode: "insensitive" } },
+          { phone: { contains: q } },
+        ],
+      },
+      include: {
+        seller_profile: true,
+      },
+      take: 10,
+    });
+
+    res.json({ success: true, sellers });
+  } catch (err) {
+    next(err);
+  }
+};
+
