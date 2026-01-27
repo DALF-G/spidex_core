@@ -88,7 +88,6 @@ exports.login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
-    // 🛡️ HARD GUARD (prevents Prisma crash)
     if (typeof email !== "string" || typeof password !== "string") {
       return res.status(401).json({ message: "Invalid credentials" });
     }
@@ -105,14 +104,23 @@ exports.login = async (req, res, next) => {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
-    // Access token
+    /* ===============================
+       🚫 HARD BLOCK SUSPENDED USERS
+    =============================== */
+    if (user.is_active === false) {
+      return res.status(403).json({
+        message: "Your account is suspended. Please contact the admin.",
+      });
+    }
+
+    /* ===============================
+       ✅ ALLOW LOGIN (APPROVED OR NOT)
+    =============================== */
     const token = signToken({
       id: user.id,
       role: user.role,
-      is_active: user.is_active,
     });
 
-    // Refresh token
     const refreshToken = signRefreshToken({
       id: user.id,
     });
@@ -136,6 +144,7 @@ exports.login = async (req, res, next) => {
         email: user.email,
         role: user.role,
         is_active: user.is_active,
+        isApprovedSeller: user.isApprovedSeller,
       },
     });
   } catch (err) {
