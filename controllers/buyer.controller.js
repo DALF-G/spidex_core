@@ -295,29 +295,32 @@ exports.deleteOrder = async (req, res, next) => {
       return res.status(404).json({ message: "Order not found" });
     }
 
-    if (!EDITABLE_STATUSES.includes(order.status)) {
+    if (order.status !== "pending") {
       return res.status(403).json({
-        message: "Completed or processing orders cannot be deleted",
+        message: "Only pending orders can be deleted",
       });
     }
 
-    await prisma.orders.update({
-      where: { id },
-      data: { status: "cancelled" },
-    });
-
-    await prisma.audit_logs.create({
-      data: {
-        id: uuidv4(),
-        actor_id: req.user.id,
-        action: "ORDER_CANCELLED",
-        metadata: { order_id: id },
-      },
-    });
+    await prisma.$transaction([
+      prisma.order_items.deleteMany({
+        where: { order_id: id },
+      }),
+      prisma.orders.delete({
+        where: { id },
+      }),
+      prisma.audit_logs.create({
+        data: {
+          id: uuidv4(),
+          actor_id: req.user.id,
+          action: "ORDER_DELETED",
+          metadata: { order_id: id },
+        },
+      }),
+    ]);
 
     res.json({
       success: true,
-      message: "Order cancelled successfully",
+      message: "Order deleted permanently",
     });
   } catch (err) {
     next(err);
