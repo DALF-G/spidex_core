@@ -5,9 +5,9 @@ const paymentController = require("../controllers/payment.controller");
 const idempotency = require("../middlewares/idempotency.middleware");
 
 router.post(
-  "/mpesa/stk-push",
+  "/payments/initiate",
   idempotency,
-  paymentController.initiateMpesa
+  paymentController.initiatePayment
 );
 
 module.exports = router;
