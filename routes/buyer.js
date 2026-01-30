@@ -62,4 +62,18 @@ router.get(
   buyerController.getNotifications
 );
 
+router.put(
+  "/orders/:id",
+  protect,
+  allowRoles("buyer"),
+  buyerController.updateOrder
+);
+
+router.delete(
+  "/orders/:id",
+  protect,
+  allowRoles("buyer"),
+  buyerController.deleteOrder
+);
+
 module.exports = router;

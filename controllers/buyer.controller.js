@@ -1,5 +1,6 @@
 const prisma = require("../config/db");
 const { v4: uuidv4 } = require("uuid");
+const EDITABLE_STATUSES = ["pending"];
 
 /**
  * BUYER: Get profile
@@ -210,3 +211,115 @@ exports.getNotifications = async (req, res, next) => {
   }
 };
 
+exports.updateOrder = async (req, res, next) => {
+  try {
+    const { items } = req.body;
+    const { id } = req.params;
+
+    if (!items || !items.length) {
+      return res.status(400).json({ message: "No items provided" });
+    }
+
+    const order = await prisma.orders.findUnique({
+      where: { id },
+      include: { order_items: true },
+    });
+
+    if (!order || order.buyer_id !== req.user.id) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    if (!EDITABLE_STATUSES.includes(order.status)) {
+      return res.status(403).json({
+        message: "Order cannot be edited at this stage",
+      });
+    }
+
+    let total = 0;
+    const newItems = [];
+
+    for (const item of items) {
+      const product = await prisma.products.findUnique({
+        where: { id: item.product_id },
+      });
+
+      if (!product || !product.is_active) {
+        return res.status(400).json({ message: "Invalid product" });
+      }
+
+      const subtotal = product.price * item.quantity;
+      total += subtotal;
+
+      newItems.push({
+        id: uuidv4(),
+        order_id: id,
+        product_id: product.id,
+        quantity: item.quantity,
+        price: product.price,
+        subtotal,
+      });
+    }
+
+    // 🔥 Replace order items atomically
+    await prisma.$transaction([
+      prisma.order_items.deleteMany({
+        where: { order_id: id },
+      }),
+      prisma.order_items.createMany({
+        data: newItems,
+      }),
+      prisma.orders.update({
+        where: { id },
+        data: { total },
+      }),
+    ]);
+
+    res.json({
+      success: true,
+      message: "Order updated successfully",
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.deleteOrder = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const order = await prisma.orders.findUnique({
+      where: { id },
+    });
+
+    if (!order || order.buyer_id !== req.user.id) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    if (!EDITABLE_STATUSES.includes(order.status)) {
+      return res.status(403).json({
+        message: "Completed or processing orders cannot be deleted",
+      });
+    }
+
+    await prisma.orders.update({
+      where: { id },
+      data: { status: "cancelled" },
+    });
+
+    await prisma.audit_logs.create({
+      data: {
+        id: uuidv4(),
+        actor_id: req.user.id,
+        action: "ORDER_CANCELLED",
+        metadata: { order_id: id },
+      },
+    });
+
+    res.json({
+      success: true,
+      message: "Order cancelled successfully",
+    });
+  } catch (err) {
+    next(err);
+  }
+};
